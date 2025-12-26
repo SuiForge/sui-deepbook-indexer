@@ -29,7 +29,7 @@ func main() {
 	}
 
 	r := gin.Default()
-	h := handlers.New(st, cfg.APISingleKey)
+	h := handlers.New(st, cfg.APISingleKey, cfg.WSPingInterval)
 
 	// Auth middleware
 	authMiddleware := h.AuthMiddleware()

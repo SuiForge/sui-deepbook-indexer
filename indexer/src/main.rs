@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context as _};
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc, Duration as ChronoDuration};
 use clap::{Parser, Subcommand};
 use prost_types::{ListValue, Struct, Value as ProtoValue};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
-use std::{collections::HashMap, env, future::Future, time::Duration};
+use std::{collections::{HashMap, HashSet}, env, future::Future, time::Duration};
 use deepbook_indexer_storage::{
     db,
     models::{BmMetric1mRow, DbEventRow, PoolMetric1mRow},
@@ -29,7 +29,7 @@ struct IndexerConfig {
     backoff_max_ms: u64,
     start_checkpoint: Option<i64>,
     stop_checkpoint: Option<i64>,
-    deepbook_package_id: String,
+    deepbook_package_ids: Vec<String>,
     deepbook_event_type: String,
     field_pool: String,
     field_side: String,
@@ -59,10 +59,24 @@ impl IndexerConfig {
         let start_checkpoint = env_opt_i64("INDEXER_START_CHECKPOINT")?;
         let stop_checkpoint = env_opt_i64("INDEXER_STOP_CHECKPOINT")?;
 
-        let deepbook_package_id =
+        let deepbook_package_id_raw =
             env::var("DEEPBOOK_PACKAGE_ID").context("missing env var DEEPBOOK_PACKAGE_ID")?;
+        let deepbook_package_ids: Vec<String> = deepbook_package_id_raw
+            .split(|c| c == ',' || c == ' ' || c == '\n' || c == '\t')
+            .filter_map(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_ascii_lowercase())
+                }
+            })
+            .collect();
+        if deepbook_package_ids.is_empty() {
+            anyhow::bail!("DEEPBOOK_PACKAGE_ID is empty");
+        }
         let deepbook_event_type = env::var("DEEPBOOK_EVENT_TYPE")
-            .unwrap_or_else(|_| "deepbook::events::TradeEvent".to_string());
+            .unwrap_or_else(|_| "OrderFilled".to_string());
 
         let field_pool = env::var("DEEPBOOK_FIELD_POOL_ID").unwrap_or_else(|_| "pool_id".into());
         let field_side = env::var("DEEPBOOK_FIELD_SIDE").unwrap_or_else(|_| "side".into());
@@ -82,7 +96,7 @@ impl IndexerConfig {
             backoff_max_ms,
             start_checkpoint,
             stop_checkpoint,
-            deepbook_package_id,
+            deepbook_package_ids,
             deepbook_event_type,
             field_pool,
             field_side,
@@ -435,10 +449,23 @@ async fn ingest_checkpoint(
         }
     }
 
-    queries::insert_db_events(pool, &trade_events).await?;
-    let (pool_rows, bm_rows) = compute_rollups(&trade_events);
-    queries::upsert_pool_metrics(pool, &pool_rows).await?;
-    queries::upsert_bm_metrics(pool, &bm_rows).await?;
+    let mut tx = pool.begin().await?;
+
+    queries::insert_db_events(&mut *tx, &trade_events).await?;
+
+    // Recompute rollups for all affected 1-minute buckets from the canonical db_events table.
+    let affected_buckets: HashSet<DateTime<Utc>> = trade_events
+        .iter()
+        .map(|e| truncate_to_minute(e.ts))
+        .collect();
+
+    for bucket_start in affected_buckets {
+        let bucket_end = bucket_start + ChronoDuration::minutes(1);
+        let events = queries::list_events_in_time_range(&mut *tx, bucket_start, bucket_end).await?;
+        let (pool_rows, bm_rows) = compute_rollups(&events);
+        queries::upsert_pool_metrics(&mut *tx, &pool_rows).await?;
+        queries::upsert_bm_metrics(&mut *tx, &bm_rows).await?;
+    }
 
     sqlx::query(
         r#"
@@ -448,8 +475,10 @@ async fn ingest_checkpoint(
         "#,
     )
     .bind(seq)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(seq)
 }
@@ -494,11 +523,12 @@ fn parse_deepbook_trade(
     digest: &str,
 ) -> Option<DbEventRow> {
     // Fast path: check package ID and event type early
-    if !event
-        .package_id
-        .as_deref()
-        .map(|p| p.eq_ignore_ascii_case(&cfg.deepbook_package_id))
-        .unwrap_or(false)
+    let package_ok = event.package_id.as_deref().map(|p| {
+        let p = p.trim().to_ascii_lowercase();
+        cfg.deepbook_package_ids.iter().any(|id| id == &p)
+    }).unwrap_or(false);
+
+    if !package_ok
         || !event.event_type.as_deref().unwrap_or("").contains(&cfg.deepbook_event_type)
     {
         return None;
@@ -513,11 +543,21 @@ fn parse_deepbook_trade(
     // Extract required fields with fail-fast
     let pool_id = get_string_field(&body, &cfg.field_pool)?;
     let price = get_decimal_field(&body, &cfg.field_price)?;
-    let base_sz = get_decimal_field(&body, &cfg.field_base_sz)?;
-    let quote_sz = get_decimal_field(&body, &cfg.field_quote_sz)?;
-    
-    let side = get_string_field(&body, &cfg.field_side)?
-        .to_ascii_lowercase();
+    let base_sz = get_decimal_field(&body, &cfg.field_base_sz)
+        .or_else(|| get_decimal_field(&body, "base_quantity"))?;
+    let quote_sz = get_decimal_field(&body, &cfg.field_quote_sz)
+        .or_else(|| get_decimal_field(&body, "quote_quantity"))?;
+
+    // Prefer explicit "side" string, fallback to OrderFilled's taker_is_bid boolean.
+    let side = if let Some(side_raw) = get_string_field(&body, &cfg.field_side) {
+        normalize_side(&side_raw)?
+    } else if let Some(is_bid) = get_bool_field(&body, &cfg.field_side) {
+        if is_bid { "buy".to_string() } else { "sell".to_string() }
+    } else if let Some(is_bid) = get_bool_field(&body, "taker_is_bid") {
+        if is_bid { "buy".to_string() } else { "sell".to_string() }
+    } else {
+        return None;
+    };
     let ts = Utc.timestamp_millis_opt(checkpoint_ts_ms).single()?;
 
     Some(DbEventRow {
@@ -528,8 +568,10 @@ fn parse_deepbook_trade(
         price,
         base_sz,
         quote_sz,
-        maker_bm: get_string_field(&body, &cfg.field_maker_bm),
-        taker_bm: get_string_field(&body, &cfg.field_taker_bm),
+        maker_bm: get_string_field(&body, &cfg.field_maker_bm)
+            .or_else(|| get_string_field(&body, "maker_balance_manager_id")),
+        taker_bm: get_string_field(&body, &cfg.field_taker_bm)
+            .or_else(|| get_string_field(&body, "taker_balance_manager_id")),
         tx_digest: digest.to_string(),
         event_seq,
         event_index: None,
@@ -549,6 +591,35 @@ fn get_decimal_field(v: &serde_json::Value, key: &str) -> Option<Decimal> {
     match v.get(key) {
         Some(serde_json::Value::Number(n)) => n.to_string().parse().ok(),
         Some(serde_json::Value::String(s)) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn get_bool_field(v: &serde_json::Value, key: &str) -> Option<bool> {
+    match v.get(key) {
+        Some(serde_json::Value::Bool(b)) => Some(*b),
+        Some(serde_json::Value::Number(n)) => {
+            if n == &serde_json::Number::from(0) {
+                Some(false)
+            } else if n == &serde_json::Number::from(1) {
+                Some(true)
+            } else {
+                None
+            }
+        }
+        Some(serde_json::Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn normalize_side(s: &str) -> Option<String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "buy" | "bid" => Some("buy".to_string()),
+        "sell" | "ask" => Some("sell".to_string()),
         _ => None,
     }
 }
@@ -692,7 +763,9 @@ async fn replay_range(
         anyhow::bail!("from_checkpoint must be <= to_checkpoint");
     }
 
-    let events = queries::list_events_in_checkpoint_range(pool, from, to).await?;
+    let mut tx = pool.begin().await?;
+
+    let events = queries::list_events_in_checkpoint_range(&mut *tx, from, to).await?;
     info!(event_count = events.len(), "fetched events for replay");
 
     let affected_buckets: Vec<DateTime<Utc>> = events
@@ -703,30 +776,20 @@ async fn replay_range(
         .collect();
 
     if !affected_buckets.is_empty() {
-        info!(
-            bucket_count = affected_buckets.len(),
-            "deleting affected rollup buckets"
-        );
-        for bucket in &affected_buckets {
-            sqlx::query("DELETE FROM pool_metrics_1m WHERE bucket_start = $1")
-                .bind(bucket)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM bm_metrics_1m WHERE bucket_start = $1")
-                .bind(bucket)
-                .execute(pool)
-                .await?;
-        }
+        info!(bucket_count = affected_buckets.len(), "recomputing affected rollup buckets");
     }
 
-    let (pool_rows, bm_rows) = compute_rollups(&events);
-    info!(
-        pool_rows = pool_rows.len(),
-        bm_rows = bm_rows.len(),
-        "recomputing rollups"
-    );
-    queries::upsert_pool_metrics(pool, &pool_rows).await?;
-    queries::upsert_bm_metrics(pool, &bm_rows).await?;
+    for bucket_start in affected_buckets {
+        let bucket_end = bucket_start + ChronoDuration::minutes(1);
+        let bucket_events =
+            queries::list_events_in_time_range(&mut *tx, bucket_start, bucket_end).await?;
+        let (pool_rows, bm_rows) = compute_rollups(&bucket_events);
+        info!(bucket_start = %bucket_start, pool_rows = pool_rows.len(), bm_rows = bm_rows.len(), "upserting rollups");
+        queries::upsert_pool_metrics(&mut *tx, &pool_rows).await?;
+        queries::upsert_bm_metrics(&mut *tx, &bm_rows).await?;
+    }
+
+    tx.commit().await?;
 
     info!("replay complete");
     Ok(())

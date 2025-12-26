@@ -72,21 +72,23 @@ type TradeEvent struct {
 
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
 	var interval string
+	var dur time.Duration
 	switch window {
 	case "1h":
 		interval = "1 hour"
+		dur = time.Hour
 	case "24h":
 		interval = "24 hours"
+		dur = 24 * time.Hour
 	default:
 		interval = "1 hour"
+		dur = time.Hour
 	}
 
 	query := `
 		SELECT 
 			$1 AS pool_id,
 			$2 AS window,
-			MIN(bucket_start) AS start_ts,
-			MAX(bucket_start) + INTERVAL '1 minute' AS end_ts,
 			COALESCE(SUM(trades), 0) AS trades,
 			COALESCE(SUM(volume_base), 0) AS volume_base,
 			COALESCE(SUM(volume_quote), 0) AS volume_quote,
@@ -103,8 +105,6 @@ func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string
 	err := s.pool.QueryRow(ctx, query, poolID, window, interval).Scan(
 		&m.PoolID,
 		&m.Window,
-		&m.StartTs,
-		&m.EndTs,
 		&m.Trades,
 		&m.VolumeBase,
 		&m.VolumeQuote,
@@ -117,18 +117,26 @@ func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string
 		return nil, err
 	}
 
+	now := time.Now().UTC()
+	m.StartTs = now.Add(-dur)
+	m.EndTs = now
+
 	return &m, nil
 }
 
 func (s *Store) GetBMVolume(ctx context.Context, bmID string, window string, poolFilter []string) (*BMVolume, error) {
 	var interval string
+	var dur time.Duration
 	switch window {
 	case "24h":
 		interval = "24 hours"
+		dur = 24 * time.Hour
 	case "7d":
 		interval = "7 days"
+		dur = 7 * 24 * time.Hour
 	default:
 		interval = "24 hours"
+		dur = 24 * time.Hour
 	}
 
 	query := `
@@ -173,50 +181,141 @@ func (s *Store) GetBMVolume(ctx context.Context, bmID string, window string, poo
 		totalVolume = totalVolume.Add(volQuote)
 	}
 
+	now := time.Now().UTC()
 	return &BMVolume{
 		BMID:             bmID,
 		Window:           window,
-		StartTs:          time.Now().Add(-parseDuration(interval)),
-		EndTs:            time.Now(),
+		StartTs:          now.Add(-dur),
+		EndTs:            now,
 		TotalVolumeQuote: totalVolume,
 		Breakdown:        breakdown,
 	}, nil
 }
 
 func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<- *TradeEvent) error {
-	query := `
-		SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
-		FROM db_events
-		WHERE 1=1
-	`
-	args := []interface{}{}
-	if len(poolFilter) > 0 {
-		query += ` AND pool_id = ANY($1)`
-		args = append(args, poolFilter)
+	type cursor struct {
+		checkpoint int64
+		txDigest   string
+		eventSeq   int32
 	}
-	query += ` ORDER BY checkpoint DESC, event_seq DESC LIMIT 100`
 
-	rows, err := s.pool.Query(ctx, query, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
+	cur := cursor{checkpoint: 0, txDigest: "", eventSeq: 0}
+	pollInterval := 1 * time.Second
 
-	for rows.Next() {
-		var ev TradeEvent
-		var ts time.Time
-		if err := rows.Scan(&ev.Checkpoint, &ts, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
+	// Send a small backlog first (latest 100), oldest -> newest.
+	{
+		query := `
+			SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
+			FROM db_events
+			WHERE 1=1
+		`
+		args := []interface{}{}
+		if len(poolFilter) > 0 {
+			query += ` AND pool_id = ANY($1)`
+			args = append(args, poolFilter)
+		}
+		query += ` ORDER BY checkpoint DESC, tx_digest DESC, event_seq DESC LIMIT 100`
+
+		rows, err := s.pool.Query(ctx, query, args...)
+		if err != nil {
 			return err
 		}
-		ev.Type = "trade"
-		ev.TsMs = ts.UnixMilli()
-		out <- &ev
+		var backlog []*TradeEvent
+		for rows.Next() {
+			var ev TradeEvent
+			var ts time.Time
+			if err := rows.Scan(&ev.Checkpoint, &ts, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
+				rows.Close()
+				return err
+			}
+			ev.Type = "trade"
+			ev.TsMs = ts.UnixMilli()
+			backlog = append(backlog, &ev)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		// Reverse so client sees oldest first.
+		for i, j := 0, len(backlog)-1; i < j; i, j = i+1, j-1 {
+			backlog[i], backlog[j] = backlog[j], backlog[i]
+		}
+
+		for _, ev := range backlog {
+			select {
+			case out <- ev:
+				cur = cursor{checkpoint: ev.Checkpoint, txDigest: ev.TxDigest, eventSeq: ev.EventSeq}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
 
-	return nil
-}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
-func parseDuration(s string) time.Duration {
-	d, _ := time.ParseDuration(s)
-	return d
+		var query string
+		var args []interface{}
+		if len(poolFilter) > 0 {
+			query = `
+				SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
+				FROM db_events
+				WHERE pool_id = ANY($1)
+				  AND (checkpoint, tx_digest, event_seq) > ($2, $3, $4)
+				ORDER BY checkpoint ASC, tx_digest ASC, event_seq ASC
+				LIMIT 500
+			`
+			args = []interface{}{poolFilter, cur.checkpoint, cur.txDigest, cur.eventSeq}
+		} else {
+			query = `
+				SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
+				FROM db_events
+				WHERE (checkpoint, tx_digest, event_seq) > ($1, $2, $3)
+				ORDER BY checkpoint ASC, tx_digest ASC, event_seq ASC
+				LIMIT 500
+			`
+			args = []interface{}{cur.checkpoint, cur.txDigest, cur.eventSeq}
+		}
+
+		rows, err := s.pool.Query(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+
+		sent := 0
+		for rows.Next() {
+			var ev TradeEvent
+			var ts time.Time
+			if err := rows.Scan(&ev.Checkpoint, &ts, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
+				rows.Close()
+				return err
+			}
+			ev.Type = "trade"
+			ev.TsMs = ts.UnixMilli()
+
+			select {
+			case out <- &ev:
+				cur = cursor{checkpoint: ev.Checkpoint, txDigest: ev.TxDigest, eventSeq: ev.EventSeq}
+				sent++
+			case <-ctx.Done():
+				rows.Close()
+				return ctx.Err()
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		if sent == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(pollInterval):
+			}
+		}
+	}
 }

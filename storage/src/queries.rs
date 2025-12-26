@@ -7,10 +7,14 @@ use crate::models::{
     PoolMetric1mRow,
     TransactionRow,
 };
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use chrono::{DateTime, Utc};
+use sqlx::{Executor, Postgres, QueryBuilder};
 use deepbook_indexer_common::types::{EventCursor, TxCursor};
 
-pub async fn get_indexer_state(pool: &PgPool) -> Result<IndexerStateRow, sqlx::Error> {
+pub async fn get_indexer_state<'e, E>(executor: E) -> Result<IndexerStateRow, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query_as::<_, IndexerStateRow>(
         r#"
         SELECT processed_checkpoint, updated_at
@@ -18,14 +22,17 @@ pub async fn get_indexer_state(pool: &PgPool) -> Result<IndexerStateRow, sqlx::E
         WHERE id = 1
         "#,
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
 }
 
-pub async fn get_transaction(
-    pool: &PgPool,
+pub async fn get_transaction<'e, E>(
+    executor: E,
     digest: &str,
-) -> Result<Option<TransactionRow>, sqlx::Error> {
+) -> Result<Option<TransactionRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query_as::<_, TransactionRow>(
         r#"
         SELECT digest, sender, checkpoint, timestamp_ms, raw
@@ -34,16 +41,19 @@ pub async fn get_transaction(
         "#,
     )
     .bind(digest)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
 }
 
-pub async fn list_transactions_by_address(
-    pool: &PgPool,
+pub async fn list_transactions_by_address<'e, E>(
+    executor: E,
     address: &str,
     limit: i64,
     cursor: Option<&TxCursor>,
-) -> Result<Vec<TransactionRow>, sqlx::Error> {
+) -> Result<Vec<TransactionRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     if let Some(cursor) = cursor {
         sqlx::query_as::<_, TransactionRow>(
             r#"
@@ -60,7 +70,7 @@ pub async fn list_transactions_by_address(
         .bind(cursor.checkpoint)
         .bind(&cursor.digest)
         .bind(limit)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await
     } else {
         sqlx::query_as::<_, TransactionRow>(
@@ -75,18 +85,21 @@ pub async fn list_transactions_by_address(
         )
         .bind(address)
         .bind(limit)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await
     }
 }
 
-pub async fn list_events(
-    pool: &PgPool,
+pub async fn list_events<'e, E>(
+    executor: E,
     address: Option<&str>,
     event_type: Option<&str>,
     limit: i64,
     cursor: Option<&EventCursor>,
-) -> Result<Vec<EventRow>, sqlx::Error> {
+) -> Result<Vec<EventRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let mut qb = QueryBuilder::<Postgres>::new(
         "SELECT id, digest, checkpoint, timestamp_ms, sender, event_type, raw FROM events",
     );
@@ -118,10 +131,16 @@ pub async fn list_events(
     qb.push(" ORDER BY checkpoint DESC, id DESC LIMIT ");
     qb.push_bind(limit);
 
-    qb.build_query_as::<EventRow>().fetch_all(pool).await
+    qb.build_query_as::<EventRow>().fetch_all(executor).await
 }
 
-pub async fn get_object(pool: &PgPool, object_id: &str) -> Result<Option<ObjectRow>, sqlx::Error> {
+pub async fn get_object<'e, E>(
+    executor: E,
+    object_id: &str,
+) -> Result<Option<ObjectRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query_as::<_, ObjectRow>(
         r#"
         SELECT object_id, owner, object_type, version, raw, updated_checkpoint
@@ -130,13 +149,16 @@ pub async fn get_object(pool: &PgPool, object_id: &str) -> Result<Option<ObjectR
         "#,
     )
     .bind(object_id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
 }
 
 // --- DeepBook-specific helpers ---
 
-pub async fn insert_db_events(pool: &PgPool, events: &[DbEventRow]) -> Result<(), sqlx::Error> {
+pub async fn insert_db_events<'e, E>(executor: E, events: &[DbEventRow]) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     if events.is_empty() {
         return Ok(());
     }
@@ -161,14 +183,30 @@ pub async fn insert_db_events(pool: &PgPool, events: &[DbEventRow]) -> Result<()
             .push_bind(&ev.raw_event);
     });
 
-    qb.push(" ON CONFLICT (tx_digest, event_seq) DO NOTHING");
-    qb.build().execute(pool).await.map(|_| ())
+    qb.push(
+        " ON CONFLICT (tx_digest, event_seq) DO UPDATE SET
+          checkpoint = EXCLUDED.checkpoint,
+          ts = EXCLUDED.ts,
+          pool_id = EXCLUDED.pool_id,
+          side = EXCLUDED.side,
+          price = EXCLUDED.price,
+          base_sz = EXCLUDED.base_sz,
+          quote_sz = EXCLUDED.quote_sz,
+          maker_bm = EXCLUDED.maker_bm,
+          taker_bm = EXCLUDED.taker_bm,
+          event_index = EXCLUDED.event_index,
+          raw_event = EXCLUDED.raw_event",
+    );
+    qb.build().execute(executor).await.map(|_| ())
 }
 
-pub async fn upsert_pool_metrics(
-    pool: &PgPool,
+pub async fn upsert_pool_metrics<'e, E>(
+    executor: E,
     rows: &[PoolMetric1mRow],
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     if rows.is_empty() {
         return Ok(());
     }
@@ -204,13 +242,16 @@ pub async fn upsert_pool_metrics(
           last_price = EXCLUDED.last_price",
     );
 
-    qb.build().execute(pool).await.map(|_| ())
+    qb.build().execute(executor).await.map(|_| ())
 }
 
-pub async fn upsert_bm_metrics(
-    pool: &PgPool,
+pub async fn upsert_bm_metrics<'e, E>(
+    executor: E,
     rows: &[BmMetric1mRow],
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     if rows.is_empty() {
         return Ok(());
     }
@@ -237,14 +278,17 @@ pub async fn upsert_bm_metrics(
           taker_volume = EXCLUDED.taker_volume",
     );
 
-    qb.build().execute(pool).await.map(|_| ())
+    qb.build().execute(executor).await.map(|_| ())
 }
 
-pub async fn list_events_in_checkpoint_range(
-    pool: &PgPool,
+pub async fn list_events_in_checkpoint_range<'e, E>(
+    executor: E,
     from: i64,
     to: i64,
-) -> Result<Vec<DbEventRow>, sqlx::Error> {
+) -> Result<Vec<DbEventRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query_as::<_, DbEventRow>(
         r#"
         SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm,
@@ -256,6 +300,29 @@ pub async fn list_events_in_checkpoint_range(
     )
     .bind(from)
     .bind(to)
-    .fetch_all(pool)
+    .fetch_all(executor)
+    .await
+}
+
+pub async fn list_events_in_time_range<'e, E>(
+    executor: E,
+    from_ts: DateTime<Utc>,
+    to_ts: DateTime<Utc>,
+) -> Result<Vec<DbEventRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query_as::<_, DbEventRow>(
+        r#"
+        SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm,
+               tx_digest, event_seq, event_index, raw_event
+        FROM db_events
+        WHERE ts >= $1 AND ts < $2
+        ORDER BY ts ASC, checkpoint ASC, tx_digest ASC, event_seq ASC
+        "#,
+    )
+    .bind(from_ts)
+    .bind(to_ts)
+    .fetch_all(executor)
     .await
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -19,12 +20,16 @@ var upgrader = websocket.Upgrader{
 }
 
 type Handler struct {
-	store     *store.Store
-	singleKey string
+	store          *store.Store
+	singleKey      string
+	wsPingInterval time.Duration
 }
 
-func New(store *store.Store, singleKey string) *Handler {
-	return &Handler{store: store, singleKey: singleKey}
+func New(store *store.Store, singleKey string, wsPingInterval time.Duration) *Handler {
+	if wsPingInterval <= 0 {
+		wsPingInterval = 15 * time.Second
+	}
+	return &Handler{store: store, singleKey: singleKey, wsPingInterval: wsPingInterval}
 }
 
 func (h *Handler) AuthMiddleware() gin.HandlerFunc {
@@ -93,15 +98,18 @@ func (h *Handler) TradesWS(c *gin.Context) {
 	out := make(chan *store.TradeEvent, 10)
 	done := make(chan struct{})
 
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+
 	go func() {
 		defer close(done)
-		if err := h.store.StreamTrades(c.Request.Context(), poolFilter, out); err != nil {
+		if err := h.store.StreamTrades(ctx, poolFilter, out); err != nil {
 			log.Println("stream trades error:", err)
 		}
 		close(out)
 	}()
 
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(h.wsPingInterval)
 	defer ticker.Stop()
 
 	for {
