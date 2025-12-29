@@ -70,6 +70,27 @@ type TradeEvent struct {
 	Checkpoint int64           `json:"checkpoint"`
 }
 
+type Candle struct {
+	BucketStart time.Time        `json:"bucket_start"`
+	Trades      int64            `json:"trades"`
+	VolumeBase  decimal.Decimal  `json:"volume_base"`
+	VolumeQuote decimal.Decimal  `json:"volume_quote"`
+	Open        *decimal.Decimal `json:"open,omitempty"`
+	High        *decimal.Decimal `json:"high,omitempty"`
+	Low         *decimal.Decimal `json:"low,omitempty"`
+	Close       *decimal.Decimal `json:"close,omitempty"`
+	VWAP        *decimal.Decimal `json:"vwap,omitempty"`
+}
+
+type CandleSeries struct {
+	PoolID   string    `json:"pool_id"`
+	Window   string    `json:"window"`
+	Interval string    `json:"interval"`
+	StartTs  time.Time `json:"start_ts"`
+	EndTs    time.Time `json:"end_ts"`
+	Candles  []Candle  `json:"candles"`
+}
+
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
 	var interval string
 	var dur time.Duration
@@ -122,6 +143,110 @@ func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string
 	m.EndTs = now
 
 	return &m, nil
+}
+
+func (s *Store) GetPoolCandles(ctx context.Context, poolID string, window string, interval string) (*CandleSeries, error) {
+	var windowInterval string
+	var windowDur time.Duration
+	switch window {
+	case "1h":
+		windowInterval = "1 hour"
+		windowDur = time.Hour
+	case "24h":
+		windowInterval = "24 hours"
+		windowDur = 24 * time.Hour
+	case "7d":
+		windowInterval = "7 days"
+		windowDur = 7 * 24 * time.Hour
+	default:
+		window = "1h"
+		windowInterval = "1 hour"
+		windowDur = time.Hour
+	}
+
+	var intervalSec int64
+	switch interval {
+	case "1m":
+		intervalSec = 60
+	case "5m":
+		intervalSec = 5 * 60
+	case "15m":
+		intervalSec = 15 * 60
+	case "1h":
+		intervalSec = 60 * 60
+	default:
+		interval = "1m"
+		intervalSec = 60
+	}
+
+	var rowsQuery string
+	var args []interface{}
+	if intervalSec == 60 {
+		rowsQuery = `
+			SELECT
+				bucket_start,
+				trades,
+				volume_base,
+				volume_quote,
+				COALESCE(open_price, last_price) AS open,
+				COALESCE(high_price, last_price) AS high,
+				COALESCE(low_price, last_price) AS low,
+				last_price AS close,
+				vwap
+			FROM pool_metrics_1m
+			WHERE pool_id = $1
+			  AND bucket_start >= NOW() - $2::INTERVAL
+			ORDER BY bucket_start ASC
+		`
+		args = []interface{}{poolID, windowInterval}
+	} else {
+		rowsQuery = `
+			SELECT
+				to_timestamp(floor(extract(epoch from bucket_start) / $2) * $2) AT TIME ZONE 'UTC' AS bucket_start,
+				COALESCE(SUM(trades), 0) AS trades,
+				COALESCE(SUM(volume_base), 0) AS volume_base,
+				COALESCE(SUM(volume_quote), 0) AS volume_quote,
+				(ARRAY_AGG(COALESCE(open_price, last_price) ORDER BY bucket_start ASC))[1] AS open,
+				MAX(COALESCE(high_price, last_price)) AS high,
+				MIN(COALESCE(low_price, last_price)) AS low,
+				(ARRAY_AGG(last_price ORDER BY bucket_start DESC))[1] AS close,
+				CASE WHEN SUM(volume_base) > 0 THEN SUM(vwap * volume_base) / SUM(volume_base) END AS vwap
+			FROM pool_metrics_1m
+			WHERE pool_id = $1
+			  AND bucket_start >= NOW() - $3::INTERVAL
+			GROUP BY 1
+			ORDER BY 1 ASC
+		`
+		args = []interface{}{poolID, intervalSec, windowInterval}
+	}
+
+	rows, err := s.pool.Query(ctx, rowsQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candles []Candle
+	for rows.Next() {
+		var c Candle
+		if err := rows.Scan(&c.BucketStart, &c.Trades, &c.VolumeBase, &c.VolumeQuote, &c.Open, &c.High, &c.Low, &c.Close, &c.VWAP); err != nil {
+			return nil, err
+		}
+		candles = append(candles, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	return &CandleSeries{
+		PoolID:   poolID,
+		Window:   window,
+		Interval: interval,
+		StartTs:  now.Add(-windowDur),
+		EndTs:    now,
+		Candles:  candles,
+	}, nil
 }
 
 func (s *Store) GetBMVolume(ctx context.Context, bmID string, window string, poolFilter []string) (*BMVolume, error) {

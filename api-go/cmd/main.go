@@ -40,6 +40,7 @@ func main() {
 	api.Use(authMiddleware)
 	{
 		api.GET("/pools/:pool_id/metrics", h.GetPoolMetrics)
+		api.GET("/pools/:pool_id/candles", h.GetPoolCandles)
 		api.GET("/bm/:bm_id/volume", h.GetBMVolume)
 		api.GET("/trades", h.TradesWS)
 	}

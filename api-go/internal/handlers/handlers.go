@@ -62,6 +62,20 @@ func (h *Handler) GetPoolMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
+func (h *Handler) GetPoolCandles(c *gin.Context) {
+	poolID := c.Param("pool_id")
+	window := c.DefaultQuery("window", "1h")
+	interval := c.DefaultQuery("interval", "1m")
+
+	series, err := h.store.GetPoolCandles(c.Request.Context(), poolID, window, interval)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, series)
+}
+
 func (h *Handler) GetBMVolume(c *gin.Context) {
 	bmID := c.Param("bm_id")
 	window := c.DefaultQuery("window", "24h")

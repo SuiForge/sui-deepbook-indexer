@@ -68,6 +68,9 @@ pub struct PoolMetric1mRow {
     pub fees_quote: Option<Decimal>,
     pub avg_price: Option<Decimal>,
     pub vwap: Option<Decimal>,
+    pub open_price: Option<Decimal>,
+    pub high_price: Option<Decimal>,
+    pub low_price: Option<Decimal>,
     pub last_price: Option<Decimal>,
 }
 

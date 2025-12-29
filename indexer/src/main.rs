@@ -639,6 +639,9 @@ fn compute_rollups(events: &[DbEventRow]) -> (Vec<PoolMetric1mRow>, Vec<BmMetric
         taker_volume: Decimal,
         sum_px_base: Decimal,
         sum_base: Decimal,
+        open_price: Option<Decimal>,
+        high_price: Option<Decimal>,
+        low_price: Option<Decimal>,
         last_price: Option<Decimal>,
     }
 
@@ -666,6 +669,9 @@ fn compute_rollups(events: &[DbEventRow]) -> (Vec<PoolMetric1mRow>, Vec<BmMetric
                 taker_volume: Decimal::ZERO,
                 sum_px_base: Decimal::ZERO,
                 sum_base: Decimal::ZERO,
+                open_price: None,
+                high_price: None,
+                low_price: None,
                 last_price: None,
             });
 
@@ -674,6 +680,17 @@ fn compute_rollups(events: &[DbEventRow]) -> (Vec<PoolMetric1mRow>, Vec<BmMetric
         pool_entry.volume_quote += ev.quote_sz;
         pool_entry.sum_px_base += ev.price * ev.base_sz;
         pool_entry.sum_base += ev.base_sz;
+        if pool_entry.open_price.is_none() {
+            pool_entry.open_price = Some(ev.price);
+        }
+        pool_entry.high_price = Some(match pool_entry.high_price {
+            Some(h) if h >= ev.price => h,
+            _ => ev.price,
+        });
+        pool_entry.low_price = Some(match pool_entry.low_price {
+            Some(l) if l <= ev.price => l,
+            _ => ev.price,
+        });
         pool_entry.last_price = Some(ev.price);
         
         if ev.side == "sell" {
@@ -727,6 +744,9 @@ fn compute_rollups(events: &[DbEventRow]) -> (Vec<PoolMetric1mRow>, Vec<BmMetric
             fees_quote: None,
             avg_price: vwap,
             vwap,
+            open_price: agg.open_price,
+            high_price: agg.high_price,
+            low_price: agg.low_price,
             last_price: agg.last_price,
         });
     }

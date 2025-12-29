@@ -44,7 +44,7 @@ docker pull alpine:latest
 启动后会：
 1. 拉起 PostgreSQL
 2. 自动执行迁移（migrations/*.sql）
-3. 索引 DeepBook（默认 Mainnet）成交事件
+3. 索引 DeepBook 成交事件（默认 Testnet，见 `docker/docker-compose.yml`）
 4. 暴露 API 服务在 http://localhost:8080
 
 ## 配置说明（必需环境变量）
@@ -57,7 +57,7 @@ DATABASE_URL=postgresql://sui:sui@localhost:5432/deepbook_indexer
 # RPC_API_URL=https://fullnode.mainnet.sui.io:443
 RPC_API_URL=https://fullnode.testnet.sui.io:443
 
-# DeepBookV3 包 ID（与所选网络匹配）
+# DeepBookV3 包 ID（与所选网络匹配；支持多个，用逗号/空格分隔）
 # Mainnet: 0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc
 # Testnet: 0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc
 DEEPBOOK_PACKAGE_ID=...
@@ -73,8 +73,9 @@ LOG_LEVEL=info
 ## 本地运行（非 Docker）
 
 ```powershell
-# 手动初始化数据库迁移
-psql "postgresql://sui:sui@localhost:5432/deepbook_indexer" -f migrations/init.sql
+# 手动初始化数据库迁移（按顺序执行 migrations/*.sql）
+psql "postgresql://sui:sui@localhost:5432/deepbook_indexer" -f migrations/001_init.sql
+psql "postgresql://sui:sui@localhost:5432/deepbook_indexer" -f migrations/002_add_pool_ohlc.sql
 
 # 运行 API（Go）
 $env:DATABASE_URL = "postgresql://sui:sui@localhost:5432/deepbook_indexer"
@@ -92,6 +93,7 @@ cargo run --package deepbook-indexer-indexer --bin deepbook-indexer-indexer -- r
 ## API 端点
 - GET /health
 - GET /v1/deepbook/pools/:pool_id/metrics?window=1h
+- GET /v1/deepbook/pools/:pool_id/candles?window=24h&interval=1m
 - GET /v1/deepbook/bm/:bm_id/volume?window=24h
 - WS  /v1/deepbook/trades?pool={pool_id}
 
@@ -100,6 +102,9 @@ cargo run --package deepbook-indexer-indexer --bin deepbook-indexer-indexer -- r
 ```bash
 # 池子指标（1 小时窗口）
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metrics?window=1h"
+
+# OHLCV K 线（24 小时窗口，1 分钟粒度）
+curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/candles?window=24h&interval=1m"
 
 # BalanceManager 成交量（24 小时窗口）
 curl "http://localhost:8080/v1/deepbook/bm/{bm_id}/volume?window=24h"
@@ -117,6 +122,8 @@ wscat -H "Authorization: Bearer <API_SINGLE_KEY>" -c "ws://localhost:8080/v1/dee
 ### 参数说明
 
 - **window（池子指标）**：允许 `1h`、`24h`；默认 `1h`。
+- **window（K 线）**：允许 `1h`、`24h`、`7d`；默认 `1h`。
+- **interval（K 线）**：允许 `1m`、`5m`、`15m`、`1h`；默认 `1m`。
 - **window（BM 成交量）**：允许 `24h`、`7d`；默认 `24h`。
 - **pool 筛选**：可选，逗号分隔的池子 ID。BM 成交量（`?pool=POOL1,POOL2`）与 WebSocket 成交流（`?pool=POOL1,POOL2`）均支持。
 - **鉴权（可选）**：如启用，需携带 `Authorization: Bearer <API_SINGLE_KEY>`。错误返回 `{ "error": "unauthorized" }`（HTTP 401）。
@@ -195,8 +202,11 @@ WebSocket 成交事件：
 ```
 
 ## 文档
+- **[docs/README.md](docs/README.md)** - 文档索引
 - **[docs/USAGE.md](docs/USAGE.md)** - 最简使用指南
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - 系统架构
+- **[docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)** - 数据契约（v1，字段语义/单位）
+- **[docs/DEEPBOOK_EVENTS.md](docs/DEEPBOOK_EVENTS.md)** - DeepBook v3 事件清单（来自 Move 源码）
 
 ## 架构
 
@@ -259,6 +269,6 @@ environment:
 参见 [docs/USAGE.md](docs/USAGE.md) 获取最简命令。可按需补充高级回放指南。
 
 ## 许可与支持
-- 许可：MIT（见仓库 LICENSE）
+- 许可：Apache-2.0（见仓库 LICENSE）
 - 文档：见 docs/ 目录
 - 问题反馈：GitHub Issues

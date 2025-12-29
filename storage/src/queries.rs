@@ -212,7 +212,7 @@ where
     }
 
     let mut qb = QueryBuilder::<Postgres>::new(
-        "INSERT INTO pool_metrics_1m (pool_id, bucket_start, trades, volume_base, volume_quote, maker_volume, taker_volume, fees_quote, avg_price, vwap, last_price) ",
+        "INSERT INTO pool_metrics_1m (pool_id, bucket_start, trades, volume_base, volume_quote, maker_volume, taker_volume, fees_quote, avg_price, vwap, open_price, high_price, low_price, last_price) ",
     );
 
     qb.push_values(rows, |mut b, r| {
@@ -226,6 +226,9 @@ where
             .push_bind(&r.fees_quote)
             .push_bind(&r.avg_price)
             .push_bind(&r.vwap)
+            .push_bind(&r.open_price)
+            .push_bind(&r.high_price)
+            .push_bind(&r.low_price)
             .push_bind(&r.last_price);
     });
 
@@ -239,6 +242,9 @@ where
           fees_quote = EXCLUDED.fees_quote,
           avg_price = EXCLUDED.avg_price,
           vwap = EXCLUDED.vwap,
+          open_price = EXCLUDED.open_price,
+          high_price = EXCLUDED.high_price,
+          low_price = EXCLUDED.low_price,
           last_price = EXCLUDED.last_price",
     );
 

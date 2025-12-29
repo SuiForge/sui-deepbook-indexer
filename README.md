@@ -1,14 +1,14 @@
-# DeepBook Data Service - Open Core V1
+# DeepBook Data Service
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Self-hosted data backend for DeepBook protocol on Sui blockchain.
+Self-hosted data backend for DeepBook v3 on Sui blockchain.
 
 > 中文文档：见 [README.zh-CN.md](README.zh-CN.md)
 
 ## Overview
 
-Checkpoint-driven indexer that extracts DeepBook trade events, computes 1-minute metrics, and serves data via REST/WebSocket APIs.
+Checkpoint-driven indexer that extracts DeepBook trade events (`OrderFilled`), computes 1-minute rollups (including OHLC), and serves data via REST/WebSocket APIs.
 
 **Features:**
 - ✅ DeepBook trade fact storage (`db_events`)
@@ -27,7 +27,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 Service will automatically:
 1. Start PostgreSQL database
 2. Run schema migrations
-3. Index DeepBook trades from Sui Mainnet
+3. Index DeepBook trades (default: Testnet in `docker/docker-compose.yml`)
 4. Serve API on http://localhost:8080
 
 ## API Usage
@@ -35,6 +35,9 @@ Service will automatically:
 ```bash
 # Pool metrics (1h window)
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metrics?window=1h"
+
+# OHLCV candles (24h window, 1m interval)
+curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/candles?window=24h&interval=1m"
 
 # BalanceManager volume (24h window)
 curl "http://localhost:8080/v1/deepbook/bm/{bm_id}/volume?window=24h"
@@ -52,6 +55,8 @@ wscat -H "Authorization: Bearer <API_SINGLE_KEY>" -c "ws://localhost:8080/v1/dee
 ### Parameters
 
 - **window (pool metrics)**: allowed `1h`, `24h`; default `1h`.
+- **window (pool candles)**: allowed `1h`, `24h`, `7d`; default `1h`.
+- **interval (pool candles)**: allowed `1m`, `5m`, `15m`, `1h`; default `1m`.
 - **window (BM volume)**: allowed `24h`, `7d`; default `24h`.
 - **pool filter**: optional, comma-separated pool IDs. Supported by BM volume (`?pool=POOL1,POOL2`) and WebSocket trades (`?pool=POOL1,POOL2`).
 - **auth (optional)**: when enabled, send `Authorization: Bearer <API_SINGLE_KEY>`. Errors return `{ "error": "unauthorized" }` with HTTP 401.
@@ -117,8 +122,11 @@ WebSocket trade event:
 
 ## Documentation
 
+- **[docs/README.md](docs/README.md)** - Documentation index
 - **[docs/USAGE.md](docs/USAGE.md)** - Minimal usage guide
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture
+- **[docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)** - Schema & field semantics (v1)
+- **[docs/DEEPBOOK_EVENTS.md](docs/DEEPBOOK_EVENTS.md)** - DeepBook v3 event list (from Move sources)
 
 ## Architecture
 
@@ -166,6 +174,7 @@ Edit `docker/docker-compose.yml`:
 ```yaml
 environment:
   RPC_API_URL: https://fullnode.testnet.sui.io:443
+  # DeepBook package id(s). You can pass multiple IDs (comma/space-separated).
   DEEPBOOK_PACKAGE_ID: "0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc"  # Testnet DeepBookV3
 ```
 
@@ -186,7 +195,7 @@ See docs/USAGE.md for minimal commands. Advanced replay instructions can be adde
 cd indexer
 export DATABASE_URL=postgresql://sui:sui@localhost:5432/deepbook_indexer
 export RPC_API_URL=https://fullnode.mainnet.sui.io:443
-export DEEPBOOK_PACKAGE_ID=0x...dee9
+export DEEPBOOK_PACKAGE_ID=0x...dee9 # or multiple IDs: "0xabc...,0xdef..."
 cargo run -- run
 ```
 
@@ -199,7 +208,7 @@ go run cmd/api/main.go
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
 
 ## Support
 
