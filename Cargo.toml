@@ -24,3 +24,16 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rust_decimal = { version = "1", features = ["serde"] }
+
+# Remote Store dependencies
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "json"] }
+bcs = "0.1.6"
+bytes = "1"
+hex = "0.4"
+url = "2"
+async-trait = "0.1"
+serde_bytes = "0.11"
+
+# Sui official types (for checkpoint parsing)
+sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
