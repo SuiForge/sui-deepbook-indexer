@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -122,6 +123,12 @@ type OrderLifecycleEvent struct {
 	CanceledQuantity *decimal.Decimal `json:"canceled_quantity,omitempty"`
 	TxDigest         string           `json:"tx_digest"`
 	EventSeq         int32            `json:"event_seq"`
+}
+
+type OrderLifecycleCursor struct {
+	TsMs       int64
+	Checkpoint int64
+	EventSeq   int32
 }
 
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
@@ -449,7 +456,7 @@ func clamp(v float64, min float64, max float64) float64 {
 	return v
 }
 
-func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, window string, eventType string, limit int) ([]OrderLifecycleEvent, error) {
+func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, window string, eventType string, limit int, cursor *OrderLifecycleCursor) ([]OrderLifecycleEvent, error) {
 	var interval string
 	switch window {
 	case "1h":
@@ -489,15 +496,21 @@ func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, wind
 	`
 
 	args := []interface{}{poolID, interval}
+	nextArg := 3
 	if eventType != "" {
 		query += " AND event_type = $3"
 		args = append(args, eventType)
-		query += " ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $4"
-		args = append(args, limit)
-	} else {
-		query += " ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $3"
-		args = append(args, limit)
+		nextArg = 4
 	}
+
+	if cursor != nil {
+		query += fmt.Sprintf(" AND ((EXTRACT(EPOCH FROM ts) * 1000) < $%d OR ((EXTRACT(EPOCH FROM ts) * 1000) = $%d AND (checkpoint, event_seq) < ($%d, $%d)))", nextArg, nextArg, nextArg+1, nextArg+2)
+		args = append(args, cursor.TsMs, cursor.Checkpoint, cursor.EventSeq)
+		nextArg += 3
+	}
+
+	query += fmt.Sprintf(" ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $%d", nextArg)
+	args = append(args, limit)
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -99,20 +100,59 @@ func (h *Handler) GetOrderLifecycle(c *gin.Context) {
 	if err != nil {
 		limit = 100
 	}
+	cursor, err := parseLifecycleCursor(c.Query("cursor"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
+		return
+	}
 
-	events, err := h.store.GetOrderLifecycleEvents(c.Request.Context(), poolID, window, eventType, limit)
+	events, err := h.store.GetOrderLifecycleEvents(c.Request.Context(), poolID, window, eventType, limit, cursor)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	nextCursor := ""
+	if len(events) == limit && len(events) > 0 {
+		last := events[len(events)-1]
+		nextCursor = fmt.Sprintf("%d|%d|%d", last.TsMs, last.Checkpoint, last.EventSeq)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"pool_id":    poolID,
-		"window":     window,
-		"event_type": eventType,
-		"count":      len(events),
-		"events":     events,
+		"pool_id":     poolID,
+		"window":      window,
+		"event_type":  eventType,
+		"count":       len(events),
+		"next_cursor": nextCursor,
+		"events":      events,
 	})
+}
+
+func parseLifecycleCursor(raw string) (*store.OrderLifecycleCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, "|")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid cursor parts")
+	}
+
+	tsMs, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	checkpoint, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	eventSeq, err := strconv.ParseInt(parts[2], 10, 32)
+	if err != nil {
+		return nil, err
+	}
+
+	return &store.OrderLifecycleCursor{TsMs: tsMs, Checkpoint: checkpoint, EventSeq: int32(eventSeq)}, nil
 }
 
 func (h *Handler) GetBMVolume(c *gin.Context) {
