@@ -93,6 +93,10 @@ func (h *Handler) GetExecutionSummary(c *gin.Context) {
 
 func (h *Handler) GetOrderLifecycle(c *gin.Context) {
 	poolID := c.Param("pool_id")
+	if strings.TrimSpace(poolID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id is required"})
+		return
+	}
 	window := c.DefaultQuery("window", "1h")
 	eventType := c.Query("event_type")
 	limitStr := c.DefaultQuery("limit", "100")
@@ -130,6 +134,10 @@ func (h *Handler) GetOrderLifecycle(c *gin.Context) {
 
 func (h *Handler) GetExecutionFills(c *gin.Context) {
 	poolID := c.Param("pool_id")
+	if strings.TrimSpace(poolID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id is required"})
+		return
+	}
 	window := c.DefaultQuery("window", "1h")
 	limitStr := c.DefaultQuery("limit", "100")
 	limit, err := strconv.Atoi(limitStr)
