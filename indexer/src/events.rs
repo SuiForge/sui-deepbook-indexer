@@ -14,10 +14,7 @@ pub trait MoveStruct {
     const NAME: &'static str;
 
     /// Check if an event type matches this struct
-    fn matches_event_type(
-        event_type: &sui_types::event::Event,
-        env: DeepbookEnv,
-    ) -> bool {
+    fn matches_event_type(event_type: &sui_types::event::Event, env: DeepbookEnv) -> bool {
         let packages = env.parse_package_bytes();
 
         packages.iter().any(|pkg| {
@@ -67,7 +64,10 @@ impl OrderFilled {
         use rust_decimal::Decimal;
 
         let side = if self.taker_is_bid { "buy" } else { "sell" };
-        let ts = Utc.timestamp_millis_opt(checkpoint_ts_ms).single().unwrap_or_else(Utc::now);
+        let ts = Utc
+            .timestamp_millis_opt(checkpoint_ts_ms)
+            .single()
+            .unwrap_or_else(Utc::now);
 
         crate::DbEventRow {
             checkpoint,
@@ -107,6 +107,42 @@ impl MoveStruct for OrderPlaced {
     const NAME: &'static str = "OrderPlaced";
 }
 
+impl OrderPlaced {
+    pub fn to_order_event_row(
+        &self,
+        checkpoint: i64,
+        checkpoint_ts_ms: i64,
+        tx_digest: &str,
+        event_seq: i32,
+    ) -> crate::DbOrderEventRow {
+        use chrono::{TimeZone, Utc};
+        use rust_decimal::Decimal;
+
+        let ts = Utc
+            .timestamp_millis_opt(checkpoint_ts_ms)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        crate::DbOrderEventRow {
+            checkpoint,
+            ts,
+            pool_id: self.pool_id.to_string(),
+            event_type: "order_placed".to_string(),
+            order_id: Some(self.order_id.to_string()),
+            trader: Some(self.trader.to_string()),
+            is_bid: Some(self.is_bid),
+            price: Some(Decimal::from(self.price)),
+            original_quantity: Some(Decimal::from(self.placed_quantity)),
+            new_quantity: Some(Decimal::from(self.placed_quantity)),
+            canceled_quantity: None,
+            tx_digest: tx_digest.to_string(),
+            event_seq,
+            event_index: None,
+            raw_event: None,
+        }
+    }
+}
+
 /// OrderCanceled event - emitted when an order is canceled
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OrderCanceled {
@@ -125,6 +161,42 @@ pub struct OrderCanceled {
 impl MoveStruct for OrderCanceled {
     const MODULE: &'static str = "order";
     const NAME: &'static str = "OrderCanceled";
+}
+
+impl OrderCanceled {
+    pub fn to_order_event_row(
+        &self,
+        checkpoint: i64,
+        checkpoint_ts_ms: i64,
+        tx_digest: &str,
+        event_seq: i32,
+    ) -> crate::DbOrderEventRow {
+        use chrono::{TimeZone, Utc};
+        use rust_decimal::Decimal;
+
+        let ts = Utc
+            .timestamp_millis_opt(checkpoint_ts_ms)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        crate::DbOrderEventRow {
+            checkpoint,
+            ts,
+            pool_id: self.pool_id.to_string(),
+            event_type: "order_canceled".to_string(),
+            order_id: Some(self.order_id.to_string()),
+            trader: Some(self.trader.to_string()),
+            is_bid: Some(self.is_bid),
+            price: Some(Decimal::from(self.price)),
+            original_quantity: Some(Decimal::from(self.original_quantity)),
+            new_quantity: None,
+            canceled_quantity: Some(Decimal::from(self.base_asset_quantity_canceled)),
+            tx_digest: tx_digest.to_string(),
+            event_seq,
+            event_index: None,
+            raw_event: None,
+        }
+    }
 }
 
 /// OrderModified event - emitted when an order is modified
@@ -146,6 +218,42 @@ pub struct OrderModified {
 impl MoveStruct for OrderModified {
     const MODULE: &'static str = "order";
     const NAME: &'static str = "OrderModified";
+}
+
+impl OrderModified {
+    pub fn to_order_event_row(
+        &self,
+        checkpoint: i64,
+        checkpoint_ts_ms: i64,
+        tx_digest: &str,
+        event_seq: i32,
+    ) -> crate::DbOrderEventRow {
+        use chrono::{TimeZone, Utc};
+        use rust_decimal::Decimal;
+
+        let ts = Utc
+            .timestamp_millis_opt(checkpoint_ts_ms)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        crate::DbOrderEventRow {
+            checkpoint,
+            ts,
+            pool_id: self.pool_id.to_string(),
+            event_type: "order_modified".to_string(),
+            order_id: Some(self.order_id.to_string()),
+            trader: Some(self.trader.to_string()),
+            is_bid: Some(self.is_bid),
+            price: Some(Decimal::from(self.price)),
+            original_quantity: Some(Decimal::from(self.previous_quantity)),
+            new_quantity: Some(Decimal::from(self.new_quantity)),
+            canceled_quantity: None,
+            tx_digest: tx_digest.to_string(),
+            event_seq,
+            event_index: None,
+            raw_event: None,
+        }
+    }
 }
 
 /// OrderExpired event - emitted when an order expires

@@ -36,6 +36,12 @@ Service will automatically:
 # Pool metrics (1h window)
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metrics?window=1h"
 
+# Execution summary (1h/24h/7d)
+curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/execution/summary?window=24h"
+
+# Order lifecycle stream snapshot (placed/canceled/modified)
+curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/execution/lifecycle?window=24h&event_type=order_canceled&limit=200"
+
 # OHLCV candles (24h window, 1m interval)
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/candles?window=24h&interval=1m"
 

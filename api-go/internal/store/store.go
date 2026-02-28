@@ -91,6 +91,39 @@ type CandleSeries struct {
 	Candles  []Candle  `json:"candles"`
 }
 
+type ExecutionSummary struct {
+	PoolID            string           `json:"pool_id"`
+	Window            string           `json:"window"`
+	StartTs           time.Time        `json:"start_ts"`
+	EndTs             time.Time        `json:"end_ts"`
+	Trades            int64            `json:"trades"`
+	VolumeBase        decimal.Decimal  `json:"volume_base"`
+	VolumeQuote       decimal.Decimal  `json:"volume_quote"`
+	BuyTrades         int64            `json:"buy_trades"`
+	SellTrades        int64            `json:"sell_trades"`
+	AvgTradeNotional  decimal.Decimal  `json:"avg_trade_notional"`
+	VWAP              *decimal.Decimal `json:"vwap,omitempty"`
+	PriceChangeBps    *float64         `json:"price_change_bps,omitempty"`
+	OrderImbalanceBps *float64         `json:"order_imbalance_bps,omitempty"`
+	ExecutionScore    *float64         `json:"execution_score,omitempty"`
+}
+
+type OrderLifecycleEvent struct {
+	Checkpoint       int64            `json:"checkpoint"`
+	TsMs             int64            `json:"ts_ms"`
+	PoolID           string           `json:"pool_id"`
+	EventType        string           `json:"event_type"`
+	OrderID          *string          `json:"order_id,omitempty"`
+	Trader           *string          `json:"trader,omitempty"`
+	IsBid            *bool            `json:"is_bid,omitempty"`
+	Price            *decimal.Decimal `json:"price,omitempty"`
+	OriginalQuantity *decimal.Decimal `json:"original_quantity,omitempty"`
+	NewQuantity      *decimal.Decimal `json:"new_quantity,omitempty"`
+	CanceledQuantity *decimal.Decimal `json:"canceled_quantity,omitempty"`
+	TxDigest         string           `json:"tx_digest"`
+	EventSeq         int32            `json:"event_seq"`
+}
+
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
 	var interval string
 	var dur time.Duration
@@ -315,6 +348,191 @@ func (s *Store) GetBMVolume(ctx context.Context, bmID string, window string, poo
 		TotalVolumeQuote: totalVolume,
 		Breakdown:        breakdown,
 	}, nil
+}
+
+func (s *Store) GetExecutionSummary(ctx context.Context, poolID string, window string) (*ExecutionSummary, error) {
+	var interval string
+	var dur time.Duration
+	switch window {
+	case "1h":
+		interval = "1 hour"
+		dur = time.Hour
+	case "24h":
+		interval = "24 hours"
+		dur = 24 * time.Hour
+	case "7d":
+		interval = "7 days"
+		dur = 7 * 24 * time.Hour
+	default:
+		window = "1h"
+		interval = "1 hour"
+		dur = time.Hour
+	}
+
+	query := `
+		SELECT
+			$1 AS pool_id,
+			$2 AS window,
+			COALESCE(COUNT(*), 0) AS trades,
+			COALESCE(SUM(base_sz), 0) AS volume_base,
+			COALESCE(SUM(quote_sz), 0) AS volume_quote,
+			COALESCE(SUM(CASE WHEN side = 'buy' THEN 1 ELSE 0 END), 0) AS buy_trades,
+			COALESCE(SUM(CASE WHEN side = 'sell' THEN 1 ELSE 0 END), 0) AS sell_trades,
+			CASE WHEN COUNT(*) > 0 THEN COALESCE(SUM(quote_sz), 0) / COUNT(*) ELSE 0 END AS avg_trade_notional,
+			CASE WHEN COALESCE(SUM(base_sz), 0) > 0 THEN COALESCE(SUM(price * base_sz), 0) / COALESCE(SUM(base_sz), 0) END AS vwap,
+			(ARRAY_AGG(price ORDER BY ts ASC))[1] AS first_price,
+			(ARRAY_AGG(price ORDER BY ts DESC))[1] AS last_price
+		FROM db_events
+		WHERE pool_id = $1
+		  AND ts >= NOW() - $3::INTERVAL
+	`
+
+	var summary ExecutionSummary
+	var firstPrice *decimal.Decimal
+	var lastPrice *decimal.Decimal
+	err := s.pool.QueryRow(ctx, query, poolID, window, interval).Scan(
+		&summary.PoolID,
+		&summary.Window,
+		&summary.Trades,
+		&summary.VolumeBase,
+		&summary.VolumeQuote,
+		&summary.BuyTrades,
+		&summary.SellTrades,
+		&summary.AvgTradeNotional,
+		&summary.VWAP,
+		&firstPrice,
+		&lastPrice,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	summary.StartTs = now.Add(-dur)
+	summary.EndTs = now
+
+	if summary.Trades > 0 {
+		imbalance := float64(summary.BuyTrades-summary.SellTrades) / float64(summary.Trades) * 10_000
+		summary.OrderImbalanceBps = &imbalance
+
+		if firstPrice != nil && lastPrice != nil && !firstPrice.IsZero() {
+			change, _ := lastPrice.Sub(*firstPrice).Div(*firstPrice).Mul(decimal.NewFromInt(10_000)).Float64()
+			summary.PriceChangeBps = &change
+		}
+
+		score := 50.0
+		if summary.PriceChangeBps != nil {
+			score += clamp(*summary.PriceChangeBps/20.0, -25, 25)
+		}
+		if summary.OrderImbalanceBps != nil {
+			score += clamp(*summary.OrderImbalanceBps/200.0, -15, 15)
+		}
+		if score < 0 {
+			score = 0
+		}
+		if score > 100 {
+			score = 100
+		}
+		summary.ExecutionScore = &score
+	}
+
+	return &summary, nil
+}
+
+func clamp(v float64, min float64, max float64) float64 {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, window string, eventType string, limit int) ([]OrderLifecycleEvent, error) {
+	var interval string
+	switch window {
+	case "1h":
+		interval = "1 hour"
+	case "24h":
+		interval = "24 hours"
+	case "7d":
+		interval = "7 days"
+	default:
+		interval = "1 hour"
+	}
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	query := `
+		SELECT checkpoint,
+		       EXTRACT(EPOCH FROM ts) * 1000 AS ts_ms,
+		       pool_id,
+		       event_type,
+		       order_id,
+		       trader,
+		       is_bid,
+		       price,
+		       original_quantity,
+		       new_quantity,
+		       canceled_quantity,
+		       tx_digest,
+		       event_seq
+		FROM db_order_events
+		WHERE pool_id = $1
+		  AND ts >= NOW() - $2::INTERVAL
+	`
+
+	args := []interface{}{poolID, interval}
+	if eventType != "" {
+		query += " AND event_type = $3"
+		args = append(args, eventType)
+		query += " ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $4"
+		args = append(args, limit)
+	} else {
+		query += " ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $3"
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]OrderLifecycleEvent, 0)
+	for rows.Next() {
+		var e OrderLifecycleEvent
+		if err := rows.Scan(
+			&e.Checkpoint,
+			&e.TsMs,
+			&e.PoolID,
+			&e.EventType,
+			&e.OrderID,
+			&e.Trader,
+			&e.IsBid,
+			&e.Price,
+			&e.OriginalQuantity,
+			&e.NewQuantity,
+			&e.CanceledQuantity,
+			&e.TxDigest,
+			&e.EventSeq,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
 func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<- *TradeEvent) error {

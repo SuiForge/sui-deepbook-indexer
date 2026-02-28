@@ -41,6 +41,8 @@ func main() {
 	{
 		api.GET("/pools/:pool_id/metrics", h.GetPoolMetrics)
 		api.GET("/pools/:pool_id/candles", h.GetPoolCandles)
+		api.GET("/pools/:pool_id/execution/summary", h.GetExecutionSummary)
+		api.GET("/pools/:pool_id/execution/lifecycle", h.GetOrderLifecycle)
 		api.GET("/bm/:bm_id/volume", h.GetBMVolume)
 		api.GET("/trades", h.TradesWS)
 	}

@@ -1,6 +1,7 @@
 use crate::models::{
     BmMetric1mRow,
     DbEventRow,
+    DbOrderEventRow,
     EventRow,
     IndexerStateRow,
     ObjectRow,
@@ -284,6 +285,58 @@ where
           taker_volume = EXCLUDED.taker_volume",
     );
 
+    qb.build().execute(executor).await.map(|_| ())
+}
+
+pub async fn insert_db_order_events<'e, E>(
+    executor: E,
+    events: &[DbOrderEventRow],
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let mut qb = QueryBuilder::<Postgres>::new(
+        "INSERT INTO db_order_events (checkpoint, ts, pool_id, event_type, order_id, trader, is_bid, price, original_quantity, new_quantity, canceled_quantity, tx_digest, event_seq, event_index, raw_event) ",
+    );
+
+    qb.push_values(events, |mut b, ev| {
+        b.push_bind(ev.checkpoint)
+            .push_bind(ev.ts)
+            .push_bind(&ev.pool_id)
+            .push_bind(&ev.event_type)
+            .push_bind(&ev.order_id)
+            .push_bind(&ev.trader)
+            .push_bind(ev.is_bid)
+            .push_bind(&ev.price)
+            .push_bind(&ev.original_quantity)
+            .push_bind(&ev.new_quantity)
+            .push_bind(&ev.canceled_quantity)
+            .push_bind(&ev.tx_digest)
+            .push_bind(ev.event_seq)
+            .push_bind(ev.event_index)
+            .push_bind(&ev.raw_event);
+    });
+
+    qb.push(
+        " ON CONFLICT (tx_digest, event_seq) DO UPDATE SET
+          checkpoint = EXCLUDED.checkpoint,
+          ts = EXCLUDED.ts,
+          pool_id = EXCLUDED.pool_id,
+          event_type = EXCLUDED.event_type,
+          order_id = EXCLUDED.order_id,
+          trader = EXCLUDED.trader,
+          is_bid = EXCLUDED.is_bid,
+          price = EXCLUDED.price,
+          original_quantity = EXCLUDED.original_quantity,
+          new_quantity = EXCLUDED.new_quantity,
+          canceled_quantity = EXCLUDED.canceled_quantity,
+          event_index = EXCLUDED.event_index,
+          raw_event = EXCLUDED.raw_event",
+    );
     qb.build().execute(executor).await.map(|_| ())
 }
 

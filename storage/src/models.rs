@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -50,6 +50,25 @@ pub struct DbEventRow {
     pub quote_sz: Decimal,
     pub maker_bm: Option<String>,
     pub taker_bm: Option<String>,
+    pub tx_digest: String,
+    pub event_seq: i32,
+    pub event_index: Option<i32>,
+    pub raw_event: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DbOrderEventRow {
+    pub checkpoint: i64,
+    pub ts: DateTime<Utc>,
+    pub pool_id: String,
+    pub event_type: String,
+    pub order_id: Option<String>,
+    pub trader: Option<String>,
+    pub is_bid: Option<bool>,
+    pub price: Option<Decimal>,
+    pub original_quantity: Option<Decimal>,
+    pub new_quantity: Option<Decimal>,
+    pub canceled_quantity: Option<Decimal>,
     pub tx_digest: String,
     pub event_seq: i32,
     pub event_index: Option<i32>,

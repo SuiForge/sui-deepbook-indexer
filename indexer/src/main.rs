@@ -25,11 +25,11 @@ use tracing::{debug, info, warn};
 
 use config::{DeepbookEnv, IndexerConfig};
 use deepbook_indexer_storage::{db, models::*, queries};
-use events::{MoveStruct, OrderFilled};
+use events::{MoveStruct, OrderCanceled, OrderFilled, OrderModified, OrderPlaced};
 use remote_store::{Backoff, RemoteStoreClient};
 
 // Re-export for events module
-pub use deepbook_indexer_storage::models::DbEventRow;
+pub use deepbook_indexer_storage::models::{DbEventRow, DbOrderEventRow};
 
 #[derive(Parser)]
 #[command(name = "deepbook-indexer", about = "DeepBook indexer (Remote Store edition)")]
@@ -187,6 +187,7 @@ async fn ingest_checkpoint(
     let timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
 
     let mut trade_events: Vec<DbEventRow> = Vec::new();
+    let mut order_lifecycle_events: Vec<DbOrderEventRow> = Vec::new();
 
     // Process each transaction
     for tx in &checkpoint.transactions {
@@ -230,7 +231,68 @@ async fn ingest_checkpoint(
                 }
             }
 
-            // TODO: Add more event types here (OrderPlaced, OrderCanceled, etc.)
+            if OrderPlaced::matches_event_type(event, *env) {
+                match bcs::from_bytes::<OrderPlaced>(&event.contents) {
+                    Ok(order_placed) => {
+                        let row = order_placed.to_order_event_row(
+                            seq as i64,
+                            timestamp_ms,
+                            &tx_digest,
+                            event_idx as i32,
+                        );
+                        order_lifecycle_events.push(row);
+                    }
+                    Err(err) => {
+                        warn!(
+                            error = ?err,
+                            event_type = %format!("{}::{}", event.type_.module, event.type_.name),
+                            "Failed to deserialize OrderPlaced"
+                        );
+                    }
+                }
+            }
+
+            if OrderCanceled::matches_event_type(event, *env) {
+                match bcs::from_bytes::<OrderCanceled>(&event.contents) {
+                    Ok(order_canceled) => {
+                        let row = order_canceled.to_order_event_row(
+                            seq as i64,
+                            timestamp_ms,
+                            &tx_digest,
+                            event_idx as i32,
+                        );
+                        order_lifecycle_events.push(row);
+                    }
+                    Err(err) => {
+                        warn!(
+                            error = ?err,
+                            event_type = %format!("{}::{}", event.type_.module, event.type_.name),
+                            "Failed to deserialize OrderCanceled"
+                        );
+                    }
+                }
+            }
+
+            if OrderModified::matches_event_type(event, *env) {
+                match bcs::from_bytes::<OrderModified>(&event.contents) {
+                    Ok(order_modified) => {
+                        let row = order_modified.to_order_event_row(
+                            seq as i64,
+                            timestamp_ms,
+                            &tx_digest,
+                            event_idx as i32,
+                        );
+                        order_lifecycle_events.push(row);
+                    }
+                    Err(err) => {
+                        warn!(
+                            error = ?err,
+                            event_type = %format!("{}::{}", event.type_.module, event.type_.name),
+                            "Failed to deserialize OrderModified"
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -239,6 +301,7 @@ async fn ingest_checkpoint(
 
     // Insert events
     queries::insert_db_events(&mut *tx, &trade_events).await?;
+    queries::insert_db_order_events(&mut *tx, &order_lifecycle_events).await?;
 
     // Recompute rollups for affected buckets
     let affected_buckets: HashSet<DateTime<Utc>> = trade_events

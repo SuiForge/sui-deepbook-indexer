@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,6 +75,44 @@ func (h *Handler) GetPoolCandles(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, series)
+}
+
+func (h *Handler) GetExecutionSummary(c *gin.Context) {
+	poolID := c.Param("pool_id")
+	window := c.DefaultQuery("window", "1h")
+
+	summary, err := h.store.GetExecutionSummary(c.Request.Context(), poolID, window)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+func (h *Handler) GetOrderLifecycle(c *gin.Context) {
+	poolID := c.Param("pool_id")
+	window := c.DefaultQuery("window", "1h")
+	eventType := c.Query("event_type")
+	limitStr := c.DefaultQuery("limit", "100")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 100
+	}
+
+	events, err := h.store.GetOrderLifecycleEvents(c.Request.Context(), poolID, window, eventType, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"pool_id":    poolID,
+		"window":     window,
+		"event_type": eventType,
+		"count":      len(events),
+		"events":     events,
+	})
 }
 
 func (h *Handler) GetBMVolume(c *gin.Context) {
