@@ -131,6 +131,20 @@ type OrderLifecycleCursor struct {
 	EventSeq   int32
 }
 
+type ExecutionFill struct {
+	Checkpoint int64           `json:"checkpoint"`
+	TsMs       int64           `json:"ts_ms"`
+	PoolID     string          `json:"pool_id"`
+	Side       string          `json:"side"`
+	Price      decimal.Decimal `json:"price"`
+	BaseSize   decimal.Decimal `json:"base_size"`
+	QuoteSize  decimal.Decimal `json:"quote_size"`
+	MakerBM    *string         `json:"maker_bm,omitempty"`
+	TakerBM    *string         `json:"taker_bm,omitempty"`
+	TxDigest   string          `json:"tx_digest"`
+	EventSeq   int32           `json:"event_seq"`
+}
+
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
 	var interval string
 	var dur time.Duration
@@ -674,4 +688,86 @@ func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<
 			}
 		}
 	}
+}
+
+func (s *Store) GetExecutionFills(ctx context.Context, poolID string, window string, limit int, cursor *OrderLifecycleCursor) ([]ExecutionFill, error) {
+	var interval string
+	switch window {
+	case "1h":
+		interval = "1 hour"
+	case "24h":
+		interval = "24 hours"
+	case "7d":
+		interval = "7 days"
+	default:
+		interval = "1 hour"
+	}
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	query := `
+		SELECT checkpoint,
+		       EXTRACT(EPOCH FROM ts) * 1000 AS ts_ms,
+		       pool_id,
+		       side,
+		       price,
+		       base_sz,
+		       quote_sz,
+		       maker_bm,
+		       taker_bm,
+		       tx_digest,
+		       event_seq
+		FROM db_events
+		WHERE pool_id = $1
+		  AND ts >= NOW() - $2::INTERVAL
+	`
+
+	args := []interface{}{poolID, interval}
+	nextArg := 3
+	if cursor != nil {
+		query += fmt.Sprintf(" AND ((EXTRACT(EPOCH FROM ts) * 1000) < $%d OR ((EXTRACT(EPOCH FROM ts) * 1000) = $%d AND (checkpoint, event_seq) < ($%d, $%d)))", nextArg, nextArg, nextArg+1, nextArg+2)
+		args = append(args, cursor.TsMs, cursor.Checkpoint, cursor.EventSeq)
+		nextArg += 3
+	}
+
+	query += fmt.Sprintf(" ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $%d", nextArg)
+	args = append(args, limit)
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ExecutionFill, 0)
+	for rows.Next() {
+		var e ExecutionFill
+		if err := rows.Scan(
+			&e.Checkpoint,
+			&e.TsMs,
+			&e.PoolID,
+			&e.Side,
+			&e.Price,
+			&e.BaseSize,
+			&e.QuoteSize,
+			&e.MakerBM,
+			&e.TakerBM,
+			&e.TxDigest,
+			&e.EventSeq,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }

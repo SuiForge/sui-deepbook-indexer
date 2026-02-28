@@ -128,6 +128,41 @@ func (h *Handler) GetOrderLifecycle(c *gin.Context) {
 	})
 }
 
+func (h *Handler) GetExecutionFills(c *gin.Context) {
+	poolID := c.Param("pool_id")
+	window := c.DefaultQuery("window", "1h")
+	limitStr := c.DefaultQuery("limit", "100")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 100
+	}
+	cursor, err := parseLifecycleCursor(c.Query("cursor"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor format"})
+		return
+	}
+
+	fills, err := h.store.GetExecutionFills(c.Request.Context(), poolID, window, limit, cursor)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	nextCursor := ""
+	if len(fills) == limit && len(fills) > 0 {
+		last := fills[len(fills)-1]
+		nextCursor = fmt.Sprintf("%d|%d|%d", last.TsMs, last.Checkpoint, last.EventSeq)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"pool_id":     poolID,
+		"window":      window,
+		"count":       len(fills),
+		"next_cursor": nextCursor,
+		"fills":       fills,
+	})
+}
+
 func parseLifecycleCursor(raw string) (*store.OrderLifecycleCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

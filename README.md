@@ -42,6 +42,9 @@ curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/execution/summary?window
 # Order lifecycle stream snapshot (placed/canceled/modified, cursor pagination)
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/execution/lifecycle?window=24h&event_type=order_canceled&limit=200&cursor=<ts_ms|checkpoint|event_seq>"
 
+# Execution fills (cursor pagination)
+curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/execution/fills?window=24h&limit=200&cursor=<ts_ms|checkpoint|event_seq>"
+
 # OHLCV candles (24h window, 1m interval)
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/candles?window=24h&interval=1m"
 
