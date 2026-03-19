@@ -8,6 +8,19 @@ use sui_types::base_types::ObjectID;
 
 use crate::config::DeepbookEnv;
 
+fn timestamp_from_ms(ms: i64) -> chrono::DateTime<chrono::Utc> {
+    use chrono::{TimeZone, Utc};
+
+    Utc.timestamp_millis_opt(ms).single().unwrap_or_else(Utc::now)
+}
+
+fn timestamp_from_u64_or(ms: u64, fallback: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    i64::try_from(ms)
+        .ok()
+        .map(timestamp_from_ms)
+        .unwrap_or(fallback)
+}
+
 /// Trait for Move struct event types
 pub trait MoveStruct {
     const MODULE: &'static str;
@@ -60,18 +73,19 @@ impl OrderFilled {
         tx_digest: &str,
         event_seq: i32,
     ) -> crate::DbEventRow {
-        use chrono::{TimeZone, Utc};
+        use chrono::Utc;
         use rust_decimal::Decimal;
 
         let side = if self.taker_is_bid { "buy" } else { "sell" };
-        let ts = Utc
-            .timestamp_millis_opt(checkpoint_ts_ms)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let checkpoint_ts = timestamp_from_ms(checkpoint_ts_ms);
+        let event_ts = timestamp_from_u64_or(self.timestamp, checkpoint_ts);
 
         crate::DbEventRow {
             checkpoint,
-            ts,
+            ts: checkpoint_ts,
+            checkpoint_ts: Some(checkpoint_ts),
+            event_ts: Some(event_ts),
+            ingested_at: Utc::now(),
             pool_id: self.pool_id.to_string(),
             side: side.to_string(),
             price: Decimal::from(self.price),
@@ -82,7 +96,10 @@ impl OrderFilled {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            raw_event: None,
+            package_id: None,
+            module: Some(<Self as MoveStruct>::MODULE.to_string()),
+            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
+            raw_event: serde_json::to_value(self).ok(),
         }
     }
 }
@@ -115,17 +132,18 @@ impl OrderPlaced {
         tx_digest: &str,
         event_seq: i32,
     ) -> crate::DbOrderEventRow {
-        use chrono::{TimeZone, Utc};
+        use chrono::Utc;
         use rust_decimal::Decimal;
 
-        let ts = Utc
-            .timestamp_millis_opt(checkpoint_ts_ms)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let checkpoint_ts = timestamp_from_ms(checkpoint_ts_ms);
+        let event_ts = timestamp_from_u64_or(self.timestamp, checkpoint_ts);
 
         crate::DbOrderEventRow {
             checkpoint,
-            ts,
+            ts: checkpoint_ts,
+            checkpoint_ts: Some(checkpoint_ts),
+            event_ts: Some(event_ts),
+            ingested_at: Utc::now(),
             pool_id: self.pool_id.to_string(),
             event_type: "order_placed".to_string(),
             order_id: Some(self.order_id.to_string()),
@@ -138,7 +156,10 @@ impl OrderPlaced {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            raw_event: None,
+            package_id: None,
+            module: Some(<Self as MoveStruct>::MODULE.to_string()),
+            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
+            raw_event: serde_json::to_value(self).ok(),
         }
     }
 }
@@ -171,17 +192,18 @@ impl OrderCanceled {
         tx_digest: &str,
         event_seq: i32,
     ) -> crate::DbOrderEventRow {
-        use chrono::{TimeZone, Utc};
+        use chrono::Utc;
         use rust_decimal::Decimal;
 
-        let ts = Utc
-            .timestamp_millis_opt(checkpoint_ts_ms)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let checkpoint_ts = timestamp_from_ms(checkpoint_ts_ms);
+        let event_ts = timestamp_from_u64_or(self.timestamp, checkpoint_ts);
 
         crate::DbOrderEventRow {
             checkpoint,
-            ts,
+            ts: checkpoint_ts,
+            checkpoint_ts: Some(checkpoint_ts),
+            event_ts: Some(event_ts),
+            ingested_at: Utc::now(),
             pool_id: self.pool_id.to_string(),
             event_type: "order_canceled".to_string(),
             order_id: Some(self.order_id.to_string()),
@@ -194,7 +216,10 @@ impl OrderCanceled {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            raw_event: None,
+            package_id: None,
+            module: Some(<Self as MoveStruct>::MODULE.to_string()),
+            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
+            raw_event: serde_json::to_value(self).ok(),
         }
     }
 }
@@ -228,17 +253,18 @@ impl OrderModified {
         tx_digest: &str,
         event_seq: i32,
     ) -> crate::DbOrderEventRow {
-        use chrono::{TimeZone, Utc};
+        use chrono::Utc;
         use rust_decimal::Decimal;
 
-        let ts = Utc
-            .timestamp_millis_opt(checkpoint_ts_ms)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let checkpoint_ts = timestamp_from_ms(checkpoint_ts_ms);
+        let event_ts = timestamp_from_u64_or(self.timestamp, checkpoint_ts);
 
         crate::DbOrderEventRow {
             checkpoint,
-            ts,
+            ts: checkpoint_ts,
+            checkpoint_ts: Some(checkpoint_ts),
+            event_ts: Some(event_ts),
+            ingested_at: Utc::now(),
             pool_id: self.pool_id.to_string(),
             event_type: "order_modified".to_string(),
             order_id: Some(self.order_id.to_string()),
@@ -251,7 +277,10 @@ impl OrderModified {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            raw_event: None,
+            package_id: None,
+            module: Some(<Self as MoveStruct>::MODULE.to_string()),
+            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
+            raw_event: serde_json::to_value(self).ok(),
         }
     }
 }
@@ -288,4 +317,62 @@ pub struct BalanceEvent {
 impl MoveStruct for BalanceEvent {
     const MODULE: &'static str = "balance_manager";
     const NAME: &'static str = "BalanceEvent";
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn order_filled_row_sets_v2_compatibility_fields() {
+        let event = OrderFilled {
+            pool_id: ObjectID::from_hex_literal("0x2").unwrap(),
+            maker_order_id: 1,
+            taker_order_id: 2,
+            maker_client_order_id: 3,
+            taker_client_order_id: 4,
+            price: 100,
+            taker_is_bid: true,
+            taker_fee: 0,
+            taker_fee_is_deep: false,
+            maker_fee: 0,
+            maker_fee_is_deep: false,
+            base_quantity: 5,
+            quote_quantity: 500,
+            maker_balance_manager_id: ObjectID::from_hex_literal("0x3").unwrap(),
+            taker_balance_manager_id: ObjectID::from_hex_literal("0x4").unwrap(),
+            timestamp: 1_700_000_000_500,
+        };
+
+        let row = event.to_db_row(10, 1_700_000_000_000, "0xtx", 7);
+        assert!(row.checkpoint_ts.is_some());
+        assert!(row.event_ts.is_some());
+        assert_eq!(row.module.as_deref(), Some("order_info"));
+        assert_eq!(row.event_name.as_deref(), Some("OrderFilled"));
+        assert!(row.raw_event.is_some());
+    }
+
+    #[test]
+    fn order_canceled_row_sets_v2_compatibility_fields() {
+        let event = OrderCanceled {
+            balance_manager_id: ObjectID::from_hex_literal("0x5").unwrap(),
+            pool_id: ObjectID::from_hex_literal("0x6").unwrap(),
+            order_id: 7,
+            client_order_id: 8,
+            trader: sui_sdk_types::Address::from([9u8; 32]),
+            price: 111,
+            is_bid: false,
+            original_quantity: 10,
+            base_asset_quantity_canceled: 4,
+            timestamp: 1_700_000_100_000,
+        };
+
+        let row = event.to_order_event_row(11, 1_700_000_000_000, "0xtx2", 8);
+        assert!(row.checkpoint_ts.is_some());
+        assert!(row.event_ts.is_some());
+        assert_eq!(row.module.as_deref(), Some("order"));
+        assert_eq!(row.event_name.as_deref(), Some("OrderCanceled"));
+        assert!(row.raw_event.is_some());
+    }
 }

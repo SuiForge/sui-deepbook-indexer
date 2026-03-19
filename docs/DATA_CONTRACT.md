@@ -54,9 +54,11 @@
   - `module`
   - `event_name`
 - Existing rows are backfilled with `checkpoint_ts = ts` and `event_ts = ts` as a compatibility fallback
-- Until the write path is updated in later tasks, newly ingested rows may still have `checkpoint_ts` / `event_ts` as `NULL`
-- Readers must continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe compatibility read path during the phased rollout
-- The write path and API read path are still rolled out incrementally in later tasks
+- Current write-path status for newly ingested rows:
+  - `checkpoint_ts`, `event_ts`, `ingested_at`, `module`, `event_name`, and `raw_event` can already be populated from the current conversion layer
+  - `package_id` still remains part of the later full writer rollout
+- Readers should continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe compatibility read path during the phased rollout
+- The remaining writer and API rollout still continues incrementally in later tasks
 
 ---
 
@@ -221,14 +223,14 @@ ts_ms|checkpoint|event_seq
 | `tx_digest` | 交易摘要 | 已实现 |
 | `event_seq` | 交易内事件序号 | 已实现 |
 | `event_index` | 事件索引补充字段 | 当前通常为空 |
-| `raw_event` | 原始事件 JSON | 当前列存在，但实现里通常为 `null` |
+| `raw_event` | 原始事件 JSON | 当前写路径已支持落库；历史数据可能仍为空 |
 
 ### 5.4 Target v2 字段方向
 
 Schema foundation status:
 - `checkpoint_ts`, `event_ts`, `ingested_at`, `package_id`, `module`, and `event_name` are introduced by migration `004_add_event_contract_v2_columns.sql`
 - Historical rows are backfilled from legacy `ts` semantics
-- During the phased rollout, newly ingested rows may still require `COALESCE(event_ts, checkpoint_ts, ts)` until the writer is updated
+- Newly ingested rows can already populate `checkpoint_ts` / `event_ts` from the current conversion layer, while `COALESCE(event_ts, checkpoint_ts, ts)` remains the compatibility read path during rollout
 
 后续建议将 Trade Fact 语义升级为：
 - `checkpoint`
@@ -302,14 +304,14 @@ Schema foundation status:
 | `tx_digest` | 交易摘要 | 已实现 |
 | `event_seq` | 交易内事件序号 | 已实现 |
 | `event_index` | 补充索引字段 | 当前通常为空 |
-| `raw_event` | 原始事件 JSON | 当前列存在，但实现里通常为 `null` |
+| `raw_event` | 原始事件 JSON | 当前写路径已支持落库；历史数据可能仍为空 |
 
 ### 6.5 Target v2 字段方向
 
 Schema foundation status:
 - `checkpoint_ts`, `event_ts`, `ingested_at`, `package_id`, `module`, and `event_name` are introduced by migration `004_add_event_contract_v2_columns.sql`
 - Existing rows currently backfill `checkpoint_ts` / `event_ts` from legacy `ts`
-- During the phased rollout, consumers should continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe read path
+- Newly ingested lifecycle rows can already populate `checkpoint_ts` / `event_ts`, while consumers should continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe read path
 
 后续建议补齐：
 - `checkpoint_ts`
@@ -615,7 +617,7 @@ Schema foundation status:
 
 以下是当前实现与 `v2` 目标契约之间最重要的差距：
 
-1. `raw_event` 字段虽然存在，但当前实现通常写入 `null`
+1. 历史数据中的 `raw_event` 可能仍为空，但当前写路径已经可以为新写入事件持久化该字段
 2. `ts` 当前是 checkpoint 时间代理值，不是正式的 `event_ts`
 3. 缺少 `asset_metadata` / `pool_metadata`
 4. 缺少 normalized 数值字段

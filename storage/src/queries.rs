@@ -165,12 +165,15 @@ where
     }
 
     let mut qb = QueryBuilder::<Postgres>::new(
-        "INSERT INTO db_events (checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq, event_index, raw_event) ",
+        "INSERT INTO db_events (checkpoint, ts, checkpoint_ts, event_ts, ingested_at, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq, event_index, package_id, module, event_name, raw_event) ",
     );
 
     qb.push_values(events, |mut b, ev| {
         b.push_bind(ev.checkpoint)
             .push_bind(ev.ts)
+            .push_bind(ev.checkpoint_ts)
+            .push_bind(ev.event_ts)
+            .push_bind(ev.ingested_at)
             .push_bind(&ev.pool_id)
             .push_bind(&ev.side)
             .push_bind(&ev.price)
@@ -181,6 +184,9 @@ where
             .push_bind(&ev.tx_digest)
             .push_bind(ev.event_seq)
             .push_bind(ev.event_index)
+            .push_bind(&ev.package_id)
+            .push_bind(&ev.module)
+            .push_bind(&ev.event_name)
             .push_bind(&ev.raw_event);
     });
 
@@ -188,6 +194,9 @@ where
         " ON CONFLICT (tx_digest, event_seq) DO UPDATE SET
           checkpoint = EXCLUDED.checkpoint,
           ts = EXCLUDED.ts,
+          checkpoint_ts = EXCLUDED.checkpoint_ts,
+          event_ts = EXCLUDED.event_ts,
+          ingested_at = EXCLUDED.ingested_at,
           pool_id = EXCLUDED.pool_id,
           side = EXCLUDED.side,
           price = EXCLUDED.price,
@@ -196,6 +205,9 @@ where
           maker_bm = EXCLUDED.maker_bm,
           taker_bm = EXCLUDED.taker_bm,
           event_index = EXCLUDED.event_index,
+          package_id = EXCLUDED.package_id,
+          module = EXCLUDED.module,
+          event_name = EXCLUDED.event_name,
           raw_event = EXCLUDED.raw_event",
     );
     qb.build().execute(executor).await.map(|_| ())
@@ -300,12 +312,15 @@ where
     }
 
     let mut qb = QueryBuilder::<Postgres>::new(
-        "INSERT INTO db_order_events (checkpoint, ts, pool_id, event_type, order_id, trader, is_bid, price, original_quantity, new_quantity, canceled_quantity, tx_digest, event_seq, event_index, raw_event) ",
+        "INSERT INTO db_order_events (checkpoint, ts, checkpoint_ts, event_ts, ingested_at, pool_id, event_type, order_id, trader, is_bid, price, original_quantity, new_quantity, canceled_quantity, tx_digest, event_seq, event_index, package_id, module, event_name, raw_event) ",
     );
 
     qb.push_values(events, |mut b, ev| {
         b.push_bind(ev.checkpoint)
             .push_bind(ev.ts)
+            .push_bind(ev.checkpoint_ts)
+            .push_bind(ev.event_ts)
+            .push_bind(ev.ingested_at)
             .push_bind(&ev.pool_id)
             .push_bind(&ev.event_type)
             .push_bind(&ev.order_id)
@@ -318,6 +333,9 @@ where
             .push_bind(&ev.tx_digest)
             .push_bind(ev.event_seq)
             .push_bind(ev.event_index)
+            .push_bind(&ev.package_id)
+            .push_bind(&ev.module)
+            .push_bind(&ev.event_name)
             .push_bind(&ev.raw_event);
     });
 
@@ -325,6 +343,9 @@ where
         " ON CONFLICT (tx_digest, event_seq) DO UPDATE SET
           checkpoint = EXCLUDED.checkpoint,
           ts = EXCLUDED.ts,
+          checkpoint_ts = EXCLUDED.checkpoint_ts,
+          event_ts = EXCLUDED.event_ts,
+          ingested_at = EXCLUDED.ingested_at,
           pool_id = EXCLUDED.pool_id,
           event_type = EXCLUDED.event_type,
           order_id = EXCLUDED.order_id,
@@ -335,6 +356,9 @@ where
           new_quantity = EXCLUDED.new_quantity,
           canceled_quantity = EXCLUDED.canceled_quantity,
           event_index = EXCLUDED.event_index,
+          package_id = EXCLUDED.package_id,
+          module = EXCLUDED.module,
+          event_name = EXCLUDED.event_name,
           raw_event = EXCLUDED.raw_event",
     );
     qb.build().execute(executor).await.map(|_| ())
@@ -350,8 +374,8 @@ where
 {
     sqlx::query_as::<_, DbEventRow>(
         r#"
-        SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm,
-               tx_digest, event_seq, event_index, raw_event
+        SELECT checkpoint, ts, checkpoint_ts, event_ts, ingested_at, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm,
+               tx_digest, event_seq, event_index, package_id, module, event_name, raw_event
         FROM db_events
         WHERE checkpoint BETWEEN $1 AND $2
         ORDER BY checkpoint, event_seq
@@ -373,8 +397,8 @@ where
 {
     sqlx::query_as::<_, DbEventRow>(
         r#"
-        SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm,
-               tx_digest, event_seq, event_index, raw_event
+        SELECT checkpoint, ts, checkpoint_ts, event_ts, ingested_at, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm,
+               tx_digest, event_seq, event_index, package_id, module, event_name, raw_event
         FROM db_events
         WHERE ts >= $1 AND ts < $2
         ORDER BY ts ASC, checkpoint ASC, tx_digest ASC, event_seq ASC
