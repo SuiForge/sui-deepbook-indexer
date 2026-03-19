@@ -133,3 +133,8 @@ curl "http://localhost:8080/v1/deepbook/markets/top?window=24h&sort=volume_quote
 curl "http://localhost:8080/v1/deepbook/pools"
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metadata"
 ```
+
+## Developer Artifacts
+
+- OpenAPI: `docs/openapi/deepbook-v1.yaml`
+- Example JS client: `examples/js/deepbook-client.mjs`

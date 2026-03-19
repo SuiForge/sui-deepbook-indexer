@@ -1,0 +1,494 @@
+# Copyright (c) Mysten Labs, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+openapi: 3.0.3
+info:
+  title: DeepBook Data Service API
+  version: 0.1.0
+  description: |
+    Builder-facing REST contract for the self-hosted DeepBook data service.
+    Decimal values are serialized as strings to avoid precision loss.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is reachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /metrics:
+    get:
+      summary: Prometheus-compatible metrics
+      responses:
+        '200':
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema:
+                type: string
+  /v1/deepbook/status:
+    get:
+      summary: Service status and source lag
+      responses:
+        '200':
+          description: Current service status snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+  /v1/deepbook/assets:
+    get:
+      summary: List asset metadata
+      responses:
+        '200':
+          description: Asset catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  assets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AssetMetadata'
+  /v1/deepbook/pools:
+    get:
+      summary: List pool metadata
+      responses:
+        '200':
+          description: Pool catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  pools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PoolMetadata'
+  /v1/deepbook/pools/{pool_id}/metadata:
+    get:
+      summary: Get a single pool metadata record
+      parameters:
+        - $ref: '#/components/parameters/PoolID'
+      responses:
+        '200':
+          description: Pool metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolMetadata'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/deepbook/markets/top:
+    get:
+      summary: Top markets by quote volume or trades
+      parameters:
+        - in: query
+          name: window
+          schema:
+            type: string
+            enum: [1h, 24h, 7d]
+            default: 24h
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [volume_quote, trades]
+            default: volume_quote
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Top market snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  window:
+                    type: string
+                  sort:
+                    type: string
+                  limit:
+                    type: integer
+                  count:
+                    type: integer
+                  markets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TopMarket'
+  /v1/deepbook/pools/{pool_id}/metrics:
+    get:
+      summary: Pool rollup metrics
+      parameters:
+        - $ref: '#/components/parameters/PoolID'
+        - in: query
+          name: window
+          schema:
+            type: string
+            enum: [1h, 24h]
+            default: 1h
+      responses:
+        '200':
+          description: Pool metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolMetrics'
+  /v1/deepbook/pools/{pool_id}/candles:
+    get:
+      summary: Pool candles
+      parameters:
+        - $ref: '#/components/parameters/PoolID'
+        - in: query
+          name: window
+          schema:
+            type: string
+            enum: [1h, 24h, 7d]
+            default: 1h
+        - in: query
+          name: interval
+          schema:
+            type: string
+            enum: [1m, 5m, 15m, 1h]
+            default: 1m
+      responses:
+        '200':
+          description: Candle series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandleSeries'
+  /v1/deepbook/pools/{pool_id}/execution/summary:
+    get:
+      summary: Execution quality summary
+      parameters:
+        - $ref: '#/components/parameters/PoolID'
+        - in: query
+          name: window
+          schema:
+            type: string
+            enum: [1h, 24h, 7d]
+            default: 1h
+      responses:
+        '200':
+          description: Execution summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionSummary'
+  /v1/deepbook/pools/{pool_id}/execution/lifecycle:
+    get:
+      summary: Order lifecycle events
+      parameters:
+        - $ref: '#/components/parameters/PoolID'
+        - in: query
+          name: window
+          schema:
+            type: string
+            default: 1h
+        - in: query
+          name: event_type
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            description: ts_ms|checkpoint|event_seq
+      responses:
+        '200':
+          description: Lifecycle events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pool_id:
+                    type: string
+                  window:
+                    type: string
+                  event_type:
+                    type: string
+                  count:
+                    type: integer
+                  next_cursor:
+                    type: string
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderLifecycleEvent'
+  /v1/deepbook/pools/{pool_id}/execution/fills:
+    get:
+      summary: Execution fills
+      parameters:
+        - $ref: '#/components/parameters/PoolID'
+        - in: query
+          name: window
+          schema:
+            type: string
+            default: 1h
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            description: ts_ms|checkpoint|event_seq
+      responses:
+        '200':
+          description: Fills
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pool_id:
+                    type: string
+                  window:
+                    type: string
+                  count:
+                    type: integer
+                  next_cursor:
+                    type: string
+                  fills:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExecutionFill'
+  /v1/deepbook/bm/{bm_id}/volume:
+    get:
+      summary: BalanceManager volume
+      parameters:
+        - in: path
+          name: bm_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: window
+          schema:
+            type: string
+            enum: [24h, 7d]
+            default: 24h
+        - in: query
+          name: pool
+          schema:
+            type: string
+            description: Comma-separated pool filter
+      responses:
+        '200':
+          description: BM volume
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BMVolume'
+components:
+  parameters:
+    PoolID:
+      in: path
+      name: pool_id
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+  schemas:
+    AssetMetadata:
+      type: object
+      properties:
+        asset_id: { type: string }
+        coin_type: { type: string, nullable: true }
+        symbol: { type: string, nullable: true }
+        name: { type: string, nullable: true }
+        decimals: { type: integer, nullable: true }
+        status: { type: string, nullable: true }
+        source: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+    PoolMetadata:
+      type: object
+      properties:
+        pool_id: { type: string }
+        base_asset_id: { type: string, nullable: true }
+        quote_asset_id: { type: string, nullable: true }
+        package_id: { type: string, nullable: true }
+        status: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+        pair: { type: string, nullable: true }
+        base_asset:
+          allOf:
+            - $ref: '#/components/schemas/AssetMetadata'
+          nullable: true
+        quote_asset:
+          allOf:
+            - $ref: '#/components/schemas/AssetMetadata'
+          nullable: true
+    TopMarket:
+      type: object
+      properties:
+        pool_id: { type: string }
+        base_asset_id: { type: string, nullable: true }
+        quote_asset_id: { type: string, nullable: true }
+        package_id: { type: string, nullable: true }
+        status: { type: string, nullable: true }
+        pair: { type: string, nullable: true }
+        trades: { type: integer }
+        volume_base: { type: string, example: "100" }
+        volume_quote: { type: string, example: "250" }
+        vwap: { type: string, nullable: true }
+        last_price: { type: string, nullable: true }
+    ServiceStatus:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        processed_checkpoint: { type: integer }
+        indexer_updated_at: { type: string, format: date-time }
+        trade_events: { type: integer }
+        order_events: { type: integer }
+        asset_metadata_count: { type: integer }
+        pool_metadata_count: { type: integer }
+        distinct_pools: { type: integer }
+        latest_checkpoint: { type: integer, nullable: true }
+        checkpoint_lag: { type: integer, nullable: true }
+        source_status: { type: string, example: ok }
+        source_url: { type: string, nullable: true }
+        source_error: { type: string, nullable: true }
+    PoolMetrics:
+      type: object
+      properties:
+        pool_id: { type: string }
+        window: { type: string }
+        start_ts: { type: string, format: date-time }
+        end_ts: { type: string, format: date-time }
+        trades: { type: integer }
+        volume_base: { type: string }
+        volume_quote: { type: string }
+        maker_volume: { type: string }
+        taker_volume: { type: string }
+        fees_quote: { type: string, nullable: true }
+        avg_price: { type: string, nullable: true }
+        vwap: { type: string, nullable: true }
+        last_price: { type: string, nullable: true }
+    Candle:
+      type: object
+      properties:
+        bucket_start: { type: string, format: date-time }
+        trades: { type: integer }
+        volume_base: { type: string }
+        volume_quote: { type: string }
+        open: { type: string, nullable: true }
+        high: { type: string, nullable: true }
+        low: { type: string, nullable: true }
+        close: { type: string, nullable: true }
+        vwap: { type: string, nullable: true }
+    CandleSeries:
+      type: object
+      properties:
+        pool_id: { type: string }
+        window: { type: string }
+        interval: { type: string }
+        start_ts: { type: string, format: date-time }
+        end_ts: { type: string, format: date-time }
+        candles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Candle'
+    ExecutionSummary:
+      type: object
+      properties:
+        pool_id: { type: string }
+        window: { type: string }
+        start_ts: { type: string, format: date-time }
+        end_ts: { type: string, format: date-time }
+        trades: { type: integer }
+        volume_base: { type: string }
+        volume_quote: { type: string }
+        buy_trades: { type: integer }
+        sell_trades: { type: integer }
+        avg_trade_notional: { type: string }
+        vwap: { type: string, nullable: true }
+        price_change_bps: { type: number, nullable: true }
+        order_imbalance_bps: { type: number, nullable: true }
+        execution_score: { type: number, nullable: true }
+    OrderLifecycleEvent:
+      type: object
+      properties:
+        checkpoint: { type: integer }
+        ts_ms: { type: integer }
+        pool_id: { type: string }
+        event_type: { type: string }
+        order_id: { type: string, nullable: true }
+        trader: { type: string, nullable: true }
+        is_bid: { type: boolean, nullable: true }
+        price: { type: string, nullable: true }
+        original_quantity: { type: string, nullable: true }
+        new_quantity: { type: string, nullable: true }
+        canceled_quantity: { type: string, nullable: true }
+        tx_digest: { type: string }
+        event_seq: { type: integer }
+    ExecutionFill:
+      type: object
+      properties:
+        checkpoint: { type: integer }
+        ts_ms: { type: integer }
+        pool_id: { type: string }
+        side: { type: string }
+        price: { type: string }
+        base_size: { type: string }
+        quote_size: { type: string }
+        maker_bm: { type: string, nullable: true }
+        taker_bm: { type: string, nullable: true }
+        tx_digest: { type: string }
+        event_seq: { type: integer }
+    BMVolumeBreakdown:
+      type: object
+      properties:
+        pool_id: { type: string }
+        volume_quote: { type: string }
+        trades: { type: integer }
+    BMVolume:
+      type: object
+      properties:
+        bm_id: { type: string }
+        window: { type: string }
+        start_ts: { type: string, format: date-time }
+        end_ts: { type: string, format: date-time }
+        total_volume_quote: { type: string }
+        breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/BMVolumeBreakdown'

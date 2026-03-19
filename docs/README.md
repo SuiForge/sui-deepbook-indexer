@@ -6,6 +6,7 @@
 - `docs/ARCHITECTURE.md`: current architecture notes (legacy / v1-oriented)
 - `docs/DATA_CONTRACT.md`: v2 目标契约 + 当前兼容说明
 - `docs/DEEPBOOK_EVENTS.md`: DeepBook v3 event inventory (from Move sources)
+- `docs/openapi/deepbook-v1.yaml`: current public REST OpenAPI contract
 
 ## Current Rollout State
 
@@ -14,6 +15,8 @@
 - metadata scaffolding (`asset_metadata`, `pool_metadata`) is now created by migration `005` and seeded on startup
 - builder-facing metadata APIs are now available at `/v1/deepbook/assets`, `/v1/deepbook/pools`, `/v1/deepbook/pools/:pool_id/metadata`
 - market discovery and DB-observed service status APIs are now available at `/v1/deepbook/markets/top` and `/v1/deepbook/status`
+- Prometheus-compatible metrics are now available at `/metrics`
+- OpenAPI contract and JS example client are now available for builder onboarding
 
 ## Planning / V2 Docs
 
