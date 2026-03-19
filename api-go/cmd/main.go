@@ -39,6 +39,9 @@ func main() {
 	api := r.Group("/v1/deepbook")
 	api.Use(authMiddleware)
 	{
+		api.GET("/assets", h.GetAssets)
+		api.GET("/pools", h.GetPools)
+		api.GET("/pools/:pool_id/metadata", h.GetPoolMetadata)
 		api.GET("/pools/:pool_id/metrics", h.GetPoolMetrics)
 		api.GET("/pools/:pool_id/candles", h.GetPoolCandles)
 		api.GET("/pools/:pool_id/execution/summary", h.GetExecutionSummary)

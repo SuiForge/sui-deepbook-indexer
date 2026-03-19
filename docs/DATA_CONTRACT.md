@@ -408,6 +408,7 @@ Current foundation:
 - migration `005_add_metadata_tables.sql` creates `asset_metadata`
 - indexer startup seeds repo-local rows for `SUI` / `USDC`
 - current source is static and intended for normalization scaffolding, not full on-chain discovery
+- API now exposes a read path via `GET /v1/deepbook/assets`
 
 字段：
 - `asset_id`
@@ -422,6 +423,7 @@ Current foundation:
 用途：
 - 做 normalized values
 - 为前端与分析接口提供直接可消费的资产信息
+- 为 builder 提供轻量资产目录发现能力
 
 ### 9.2 `pool_metadata`（Target v2）
 
@@ -429,6 +431,7 @@ Current foundation:
 - migration `005_add_metadata_tables.sql` creates `pool_metadata`
 - current seed only includes one known mainnet `SUI/USDC` mapping from existing repo-local bootstrap data
 - testnet pool rows are intentionally not guessed until verified identifiers are curated
+- APIs now expose read paths via `GET /v1/deepbook/pools` and `GET /v1/deepbook/pools/:pool_id/metadata`
 
 字段：
 - `pool_id`
@@ -441,12 +444,70 @@ Current foundation:
 用途：
 - 明确 pool 与 base / quote 的映射
 - 为 candles、ranking、execution summary 提供元数据支撑
+- 为 builder 侧市场发现与 pair 展示提供最小目录面
 
 ---
 
 ## 10. API 契约
 
-## 10.1 `GET /v1/deepbook/pools/:pool_id/metrics`
+## 10.1 `GET /v1/deepbook/assets`
+
+### Current 输出语义
+
+返回：
+- `count`
+- `assets[]`
+
+`assets[]` 包含：
+- `asset_id`
+- `coin_type`
+- `symbol`
+- `name`
+- `decimals`
+- `status`
+- `source`
+- `updated_at`
+
+说明：
+- 当前返回的是 repo-local seed / scaffolded metadata 目录，不保证全链完整覆盖
+- 列表按 `symbol NULLS LAST, asset_id ASC` 排序
+
+## 10.2 `GET /v1/deepbook/pools`
+
+### Current 输出语义
+
+返回：
+- `count`
+- `pools[]`
+
+`pools[]` 包含：
+- `pool_id`
+- `base_asset_id`
+- `quote_asset_id`
+- `package_id`
+- `status`
+- `updated_at`
+- `pair`
+- `base_asset`
+- `quote_asset`
+
+说明：
+- `base_asset` / `quote_asset` 为可选嵌入对象；当前会在 metadata 命中时返回
+- `pair` 当前按 `BASE_SYMBOL/QUOTE_SYMBOL` 派生；若任一 symbol 缺失则为空
+- 列表按 `pool_id ASC` 排序
+
+## 10.3 `GET /v1/deepbook/pools/:pool_id/metadata`
+
+### Current 输出语义
+
+返回单个 pool metadata 对象，字段同 `GET /v1/deepbook/pools` 中的单条 `pools[]` 元素。
+
+说明：
+- `pool_id` 为空时返回 `400`
+- 当 metadata 中不存在该 pool 时返回 `404`
+- 当前 detail API 仍然只反映已 seed / 已 curated 的目录数据
+
+## 10.4 `GET /v1/deepbook/pools/:pool_id/metrics`
 
 ### Current 输出语义
 
@@ -470,7 +531,7 @@ Current foundation:
 - `start_ts` / `end_ts` 为 API 计算窗口边界，不是数据库字段原样透传
 - `vwap` 使用分钟聚合结果按 `volume_base` 加权再聚合
 
-## 10.2 `GET /v1/deepbook/pools/:pool_id/candles`
+## 10.5 `GET /v1/deepbook/pools/:pool_id/candles`
 
 ### Current 输出语义
 
@@ -498,7 +559,7 @@ Current foundation:
 - 当前 interval 支持：`1m`、`5m`、`15m`、`1h`
 - 当 interval > `1m` 时，API 基于 `pool_metrics_1m` 二次聚合
 
-## 10.3 `GET /v1/deepbook/pools/:pool_id/execution/summary`
+## 10.6 `GET /v1/deepbook/pools/:pool_id/execution/summary`
 
 ### Current 输出语义
 
@@ -524,7 +585,7 @@ Current foundation:
 时间口径：
 - 当前 summary 的窗口过滤与首尾价格计算均基于 `COALESCE(event_ts, checkpoint_ts, ts)`
 
-## 10.4 `GET /v1/deepbook/pools/:pool_id/execution/lifecycle`
+## 10.7 `GET /v1/deepbook/pools/:pool_id/execution/lifecycle`
 
 ### Current 输出语义
 
@@ -556,7 +617,7 @@ Current foundation:
 - `next_cursor` 仅当返回条数等于 limit 且非空时生成
 - 当前支持按 `event_type` 过滤
 
-## 10.5 `GET /v1/deepbook/pools/:pool_id/execution/fills`
+## 10.8 `GET /v1/deepbook/pools/:pool_id/execution/fills`
 
 ### Current 输出语义
 
@@ -584,7 +645,7 @@ Current foundation:
 - 字段 `base_size` / `quote_size` 是 API 命名，数据库对应 `base_sz` / `quote_sz`
 - `ts_ms` 当前来自 `COALESCE(event_ts, checkpoint_ts, ts)`
 
-## 10.6 `GET /v1/deepbook/bm/:bm_id/volume`
+## 10.9 `GET /v1/deepbook/bm/:bm_id/volume`
 
 ### Current 输出语义
 
@@ -605,7 +666,7 @@ Current foundation:
 - 当前窗口支持：`24h`、`7d`
 - 支持可选 `pool` 过滤
 
-## 10.7 `WS /v1/deepbook/trades`
+## 10.10 `WS /v1/deepbook/trades`
 
 ### Current 输出语义
 
@@ -638,7 +699,7 @@ Current foundation:
 
 1. 历史数据中的 `raw_event` 可能仍为空，但当前写路径已经可以为新写入事件持久化该字段
 2. `ts` 当前是 checkpoint 时间代理值，不是正式的 `event_ts`
-3. `asset_metadata` / `pool_metadata` 已有最小静态脚手架，但覆盖面仍有限，尚未实现链上自动发现
+3. `asset_metadata` / `pool_metadata` 虽已通过 `/assets`、`/pools`、`/pools/:pool_id/metadata` 对外暴露，但覆盖面仍有限，尚未实现链上自动发现
 4. 缺少 normalized 数值字段
 5. `OrderExpired` 尚未进入主索引流程
 6. 当前 `execution_score` 是内部启发式指标，需要在对外文档中避免被误解为协议原生指标

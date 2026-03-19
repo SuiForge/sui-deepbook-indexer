@@ -16,6 +16,7 @@ Checkpoint-driven indexer that reads Sui checkpoint data from Remote Store, extr
 - ✅ 1-minute rollup metrics (pool & BalanceManager dimensions)
 - ✅ Idempotent ingestion with replay capability
 - ✅ Metadata scaffolding (`asset_metadata`, `pool_metadata`) with startup seed
+- ✅ Builder-facing metadata discovery APIs (`/assets`, `/pools`, `/pools/:pool_id/metadata`)
 - ✅ Remote Store-first ingestion with environment-based package selection
 - ✅ REST API + WebSocket streaming
 - ✅ Docker Compose one-click deployment
@@ -36,10 +37,20 @@ Current v2 foundation notes:
 - `execution/fills`, `execution/lifecycle`, `execution/summary`, and WS trade `ts_ms` now prefer `COALESCE(event_ts, checkpoint_ts, ts)`
 - new indexer writes persist `checkpoint_ts`, `event_ts`, `package_id`, `module`, `event_name`, and `raw_event`
 - every indexer startup seeds minimal metadata scaffolding for `asset_metadata` / `pool_metadata`
+- metadata REST endpoints expose the currently seeded/scaffolded asset + pool catalog for builder discovery
 
 ## API Usage
 
 ```bash
+# Asset catalog
+curl "http://localhost:8080/v1/deepbook/assets"
+
+# Pool catalog
+curl "http://localhost:8080/v1/deepbook/pools"
+
+# Pool metadata detail
+curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metadata"
+
 # Pool metrics (1h window)
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metrics?window=1h"
 
@@ -70,6 +81,7 @@ wscat -H "Authorization: Bearer <API_SINGLE_KEY>" -c "ws://localhost:8080/v1/dee
 
 ### Parameters
 
+- **metadata coverage**: current `/assets` + `/pools` responses reflect the repo-local seeded catalog, not full chain-wide discovery.
 - **window (pool metrics)**: allowed `1h`, `24h`; default `1h`.
 - **window (pool candles)**: allowed `1h`, `24h`, `7d`; default `1h`.
 - **interval (pool candles)**: allowed `1m`, `5m`, `15m`, `1h`; default `1m`.

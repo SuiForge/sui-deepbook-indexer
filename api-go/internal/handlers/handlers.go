@@ -28,6 +28,9 @@ type Handler struct {
 }
 
 type storeBackend interface {
+	ListAssets(ctx context.Context) ([]store.AssetMetadata, error)
+	ListPools(ctx context.Context) ([]store.PoolMetadata, error)
+	GetPoolMetadata(ctx context.Context, poolID string) (*store.PoolMetadata, error)
 	GetPoolMetrics(ctx context.Context, poolID string, window string) (*store.PoolMetrics, error)
 	GetPoolCandles(ctx context.Context, poolID string, window string, interval string) (*store.CandleSeries, error)
 	GetExecutionSummary(ctx context.Context, poolID string, window string) (*store.ExecutionSummary, error)
@@ -44,6 +47,52 @@ func New(store storeBackend, singleKey string, wsPingInterval time.Duration) *Ha
 		wsPingInterval = 15 * time.Second
 	}
 	return &Handler{store: store, singleKey: singleKey, wsPingInterval: wsPingInterval}
+}
+
+func (h *Handler) GetAssets(c *gin.Context) {
+	assets, err := h.store.ListAssets(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"count":  len(assets),
+		"assets": assets,
+	})
+}
+
+func (h *Handler) GetPools(c *gin.Context) {
+	pools, err := h.store.ListPools(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"count": len(pools),
+		"pools": pools,
+	})
+}
+
+func (h *Handler) GetPoolMetadata(c *gin.Context) {
+	poolID := c.Param("pool_id")
+	if strings.TrimSpace(poolID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id is required"})
+		return
+	}
+
+	pool, err := h.store.GetPoolMetadata(c.Request.Context(), poolID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if pool == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pool metadata not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, pool)
 }
 
 func (h *Handler) AuthMiddleware() gin.HandlerFunc {

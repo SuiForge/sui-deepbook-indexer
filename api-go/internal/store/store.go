@@ -150,6 +150,29 @@ type ExecutionFill struct {
 	EventSeq   int32           `json:"event_seq"`
 }
 
+type AssetMetadata struct {
+	AssetID   string    `json:"asset_id"`
+	CoinType  *string   `json:"coin_type,omitempty"`
+	Symbol    *string   `json:"symbol,omitempty"`
+	Name      *string   `json:"name,omitempty"`
+	Decimals  *int32    `json:"decimals,omitempty"`
+	Status    *string   `json:"status,omitempty"`
+	Source    *string   `json:"source,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PoolMetadata struct {
+	PoolID       string         `json:"pool_id"`
+	BaseAssetID  *string        `json:"base_asset_id,omitempty"`
+	QuoteAssetID *string        `json:"quote_asset_id,omitempty"`
+	PackageID    *string        `json:"package_id,omitempty"`
+	Status       *string        `json:"status,omitempty"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	Pair         *string        `json:"pair,omitempty"`
+	BaseAsset    *AssetMetadata `json:"base_asset,omitempty"`
+	QuoteAsset   *AssetMetadata `json:"quote_asset,omitempty"`
+}
+
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
 	var interval string
 	var dur time.Duration
@@ -202,6 +225,127 @@ func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string
 	m.EndTs = now
 
 	return &m, nil
+}
+
+func (s *Store) ListAssets(ctx context.Context) ([]AssetMetadata, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT asset_id, coin_type, symbol, name, decimals, status, source, updated_at
+		FROM asset_metadata
+		ORDER BY symbol NULLS LAST, asset_id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]AssetMetadata, 0)
+	for rows.Next() {
+		var item AssetMetadata
+		if err := rows.Scan(
+			&item.AssetID,
+			&item.CoinType,
+			&item.Symbol,
+			&item.Name,
+			&item.Decimals,
+			&item.Status,
+			&item.Source,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func (s *Store) ListPools(ctx context.Context) ([]PoolMetadata, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			p.pool_id,
+			p.base_asset_id,
+			p.quote_asset_id,
+			p.package_id,
+			p.status,
+			p.updated_at,
+			ba.asset_id,
+			ba.coin_type,
+			ba.symbol,
+			ba.name,
+			ba.decimals,
+			ba.status,
+			ba.source,
+			ba.updated_at,
+			qa.asset_id,
+			qa.coin_type,
+			qa.symbol,
+			qa.name,
+			qa.decimals,
+			qa.status,
+			qa.source,
+			qa.updated_at
+		FROM pool_metadata p
+		LEFT JOIN asset_metadata ba ON ba.asset_id = p.base_asset_id
+		LEFT JOIN asset_metadata qa ON qa.asset_id = p.quote_asset_id
+		ORDER BY p.pool_id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanPoolMetadataRows(rows)
+}
+
+func (s *Store) GetPoolMetadata(ctx context.Context, poolID string) (*PoolMetadata, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			p.pool_id,
+			p.base_asset_id,
+			p.quote_asset_id,
+			p.package_id,
+			p.status,
+			p.updated_at,
+			ba.asset_id,
+			ba.coin_type,
+			ba.symbol,
+			ba.name,
+			ba.decimals,
+			ba.status,
+			ba.source,
+			ba.updated_at,
+			qa.asset_id,
+			qa.coin_type,
+			qa.symbol,
+			qa.name,
+			qa.decimals,
+			qa.status,
+			qa.source,
+			qa.updated_at
+		FROM pool_metadata p
+		LEFT JOIN asset_metadata ba ON ba.asset_id = p.base_asset_id
+		LEFT JOIN asset_metadata qa ON qa.asset_id = p.quote_asset_id
+		WHERE p.pool_id = $1
+		LIMIT 1
+	`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items, err := scanPoolMetadataRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	return &items[0], nil
 }
 
 func (s *Store) GetPoolCandles(ctx context.Context, poolID string, window string, interval string) (*CandleSeries, error) {
@@ -473,6 +617,102 @@ func clamp(v float64, min float64, max float64) float64 {
 		return max
 	}
 	return v
+}
+
+func scanPoolMetadataRows(rows pgxRows) ([]PoolMetadata, error) {
+	out := make([]PoolMetadata, 0)
+	for rows.Next() {
+		var (
+			item PoolMetadata
+
+			baseAssetID    *string
+			baseCoinType   *string
+			baseSymbol     *string
+			baseName       *string
+			baseDecimals   *int32
+			baseStatus     *string
+			baseSource     *string
+			baseUpdatedAt  *time.Time
+			quoteAssetID   *string
+			quoteCoinType  *string
+			quoteSymbol    *string
+			quoteName      *string
+			quoteDecimals  *int32
+			quoteStatus    *string
+			quoteSource    *string
+			quoteUpdatedAt *time.Time
+		)
+
+		if err := rows.Scan(
+			&item.PoolID,
+			&item.BaseAssetID,
+			&item.QuoteAssetID,
+			&item.PackageID,
+			&item.Status,
+			&item.UpdatedAt,
+			&baseAssetID,
+			&baseCoinType,
+			&baseSymbol,
+			&baseName,
+			&baseDecimals,
+			&baseStatus,
+			&baseSource,
+			&baseUpdatedAt,
+			&quoteAssetID,
+			&quoteCoinType,
+			&quoteSymbol,
+			&quoteName,
+			&quoteDecimals,
+			&quoteStatus,
+			&quoteSource,
+			&quoteUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if baseAssetID != nil && baseUpdatedAt != nil {
+			item.BaseAsset = &AssetMetadata{
+				AssetID:   *baseAssetID,
+				CoinType:  baseCoinType,
+				Symbol:    baseSymbol,
+				Name:      baseName,
+				Decimals:  baseDecimals,
+				Status:    baseStatus,
+				Source:    baseSource,
+				UpdatedAt: *baseUpdatedAt,
+			}
+		}
+		if quoteAssetID != nil && quoteUpdatedAt != nil {
+			item.QuoteAsset = &AssetMetadata{
+				AssetID:   *quoteAssetID,
+				CoinType:  quoteCoinType,
+				Symbol:    quoteSymbol,
+				Name:      quoteName,
+				Decimals:  quoteDecimals,
+				Status:    quoteStatus,
+				Source:    quoteSource,
+				UpdatedAt: *quoteUpdatedAt,
+			}
+		}
+		if item.BaseAsset != nil && item.BaseAsset.Symbol != nil && item.QuoteAsset != nil && item.QuoteAsset.Symbol != nil {
+			pair := fmt.Sprintf("%s/%s", *item.BaseAsset.Symbol, *item.QuoteAsset.Symbol)
+			item.Pair = &pair
+		}
+
+		out = append(out, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+type pgxRows interface {
+	Next() bool
+	Scan(dest ...interface{}) error
+	Err() error
 }
 
 func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, window string, eventType string, limit int, cursor *OrderLifecycleCursor) ([]OrderLifecycleEvent, error) {
