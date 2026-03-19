@@ -97,6 +97,7 @@ export DEEPBOOK_ENV="mainnet"
 ## API Endpoints
 
 - `GET /health`
+- `GET /metrics`
 - `GET /v1/deepbook/status`
 - `GET /v1/deepbook/assets`
 - `GET /v1/deepbook/markets/top?window=1h|24h|7d&sort=volume_quote|trades&limit=1..100`
@@ -115,6 +116,7 @@ Field semantics: `docs/DATA_CONTRACT.md`.
 
 Current compatibility notes:
 - `/status` now exposes DB-observed processed checkpoint and counts, and enriches them with Remote Store latest checkpoint / lag when source probing succeeds
+- `/metrics` exposes a Prometheus-compatible text surface aligned with the current `/status` snapshot
 - `/assets`, `/pools`, `/pools/:pool_id/metadata` expose the current seeded metadata catalog for builder discovery; coverage is intentionally partial during rollout
 - `/markets/top` is backed by `pool_metrics_1m` and joins seeded pool metadata when available
 - `execution/fills` and `execution/lifecycle` return `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`
@@ -124,6 +126,7 @@ Current compatibility notes:
 ## Builder API Quick Checks
 
 ```bash
+curl "http://localhost:8080/metrics"
 curl "http://localhost:8080/v1/deepbook/status"
 curl "http://localhost:8080/v1/deepbook/assets"
 curl "http://localhost:8080/v1/deepbook/markets/top?window=24h&sort=volume_quote&limit=20"

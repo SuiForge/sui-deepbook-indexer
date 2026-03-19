@@ -37,6 +37,7 @@ func main() {
 	authMiddleware := h.AuthMiddleware()
 
 	r.GET("/health", h.Health)
+	r.GET("/metrics", h.Metrics)
 
 	api := r.Group("/v1/deepbook")
 	api.Use(authMiddleware)

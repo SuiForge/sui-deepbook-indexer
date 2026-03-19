@@ -561,6 +561,7 @@ Current foundation:
 - 该接口首先暴露数据库可直接观测到的处理进度与计数摘要
 - 当 Remote Store probe 成功时，会额外返回 `latest_checkpoint` 与 `checkpoint_lag`
 - `source_status` 当前用于区分 `ok` / `error` / `disabled`
+- 相同状态快照也会被映射为 `GET /metrics` 的 Prometheus-compatible gauge 指标
 
 ## 10.6 `GET /v1/deepbook/pools/:pool_id/metrics`
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -519,5 +520,54 @@ func TestGetServiceStatusMarksSourceErrorAsDegraded(t *testing.T) {
 	}
 	if resp.SourceError == nil || *resp.SourceError != "remote store unavailable" {
 		t.Fatalf("expected source_error, got %#v", resp.SourceError)
+	}
+}
+
+func TestMetricsEndpointExposesStatusGauges(t *testing.T) {
+	h := NewWithSource(&fakeStore{
+		serviceStatus: &store.ServiceStatus{
+			Status:              "ok",
+			ProcessedCheckpoint: 12345,
+			IndexerUpdatedAt:    time.Date(2026, time.March, 19, 12, 0, 0, 0, time.UTC),
+			TradeEvents:         100,
+			OrderEvents:         50,
+			AssetMetadataCount:  2,
+			PoolMetadataCount:   1,
+			DistinctPools:       3,
+		},
+	}, &fakeSourceProbe{
+		status: &source.CheckpointStatus{
+			LatestCheckpoint: 12370,
+			SourceURL:        "https://checkpoints.testnet.sui.io",
+		},
+	}, "", 0)
+
+	c, w := newTestContext(http.MethodGet, "/metrics", nil)
+	h.Metrics(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "text/plain") {
+		t.Fatalf("expected text/plain content type, got %q", got)
+	}
+
+	body := w.Body.String()
+	for _, metric := range []string{
+		"deepbook_processed_checkpoint 12345",
+		"deepbook_latest_checkpoint 12370",
+		"deepbook_checkpoint_lag 25",
+		"deepbook_trade_events 100",
+		"deepbook_order_events 50",
+		"deepbook_asset_metadata_count 2",
+		"deepbook_pool_metadata_count 1",
+		"deepbook_distinct_pools 3",
+		`deepbook_source_status{state="ok"} 1`,
+		`deepbook_source_status{state="error"} 0`,
+		`deepbook_source_status{state="disabled"} 0`,
+	} {
+		if !strings.Contains(body, metric) {
+			t.Fatalf("expected metric %q in body:\n%s", metric, body)
+		}
 	}
 }

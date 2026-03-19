@@ -191,6 +191,21 @@ func (h *Handler) composeServiceStatus(ctx context.Context) (*store.ServiceStatu
 	return &merged, nil
 }
 
+func (h *Handler) Metrics(c *gin.Context) {
+	status, err := h.composeServiceStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if status == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "service status unavailable"})
+		return
+	}
+
+	c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	c.String(http.StatusOK, formatPrometheusMetrics(status))
+}
+
 func (h *Handler) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if h.singleKey == "" {
@@ -355,6 +370,46 @@ func parseTopMarketsLimit(raw string) int {
 		return 100
 	}
 	return limit
+}
+
+func formatPrometheusMetrics(status *store.ServiceStatus) string {
+	var b strings.Builder
+
+	writePromGaugeInt(&b, "deepbook_processed_checkpoint", "Latest processed checkpoint stored in the local indexer state table.", status.ProcessedCheckpoint)
+	writePromGaugeInt(&b, "deepbook_trade_events", "Total number of trade fact rows currently stored.", status.TradeEvents)
+	writePromGaugeInt(&b, "deepbook_order_events", "Total number of lifecycle event rows currently stored.", status.OrderEvents)
+	writePromGaugeInt(&b, "deepbook_asset_metadata_count", "Number of asset metadata rows currently stored.", status.AssetMetadataCount)
+	writePromGaugeInt(&b, "deepbook_pool_metadata_count", "Number of pool metadata rows currently stored.", status.PoolMetadataCount)
+	writePromGaugeInt(&b, "deepbook_distinct_pools", "Number of distinct pools seen across facts and metadata.", status.DistinctPools)
+
+	if status.LatestCheckpoint != nil {
+		writePromGaugeInt(&b, "deepbook_latest_checkpoint", "Latest checkpoint currently available from the configured source probe.", *status.LatestCheckpoint)
+	}
+	if status.CheckpointLag != nil {
+		writePromGaugeInt(&b, "deepbook_checkpoint_lag", "Difference between latest source checkpoint and processed checkpoint.", *status.CheckpointLag)
+	}
+
+	writePromStateGauge(&b, "deepbook_source_status", "Current source probe state exposed as a one-hot gauge over state label.", status.SourceStatus, []string{"ok", "error", "disabled"})
+
+	return b.String()
+}
+
+func writePromGaugeInt(b *strings.Builder, name string, help string, value int64) {
+	fmt.Fprintf(b, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(b, "# TYPE %s gauge\n", name)
+	fmt.Fprintf(b, "%s %d\n", name, value)
+}
+
+func writePromStateGauge(b *strings.Builder, name string, help string, current string, states []string) {
+	fmt.Fprintf(b, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(b, "# TYPE %s gauge\n", name)
+	for _, state := range states {
+		value := 0
+		if current == state {
+			value = 1
+		}
+		fmt.Fprintf(b, "%s{state=%q} %d\n", name, state, value)
+	}
 }
 
 func parseLifecycleCursor(raw string) (*store.OrderLifecycleCursor, error) {

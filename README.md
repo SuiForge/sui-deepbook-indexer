@@ -47,6 +47,9 @@ Current v2 foundation notes:
 # Service status
 curl "http://localhost:8080/v1/deepbook/status"
 
+# Prometheus-compatible metrics
+curl "http://localhost:8080/metrics"
+
 # Asset catalog
 curl "http://localhost:8080/v1/deepbook/assets"
 
@@ -91,6 +94,7 @@ wscat -H "Authorization: Bearer <API_SINGLE_KEY>" -c "ws://localhost:8080/v1/dee
 
 - **status semantics**: `/v1/deepbook/status` now returns DB counts plus `latest_checkpoint`, `checkpoint_lag`, `source_status`, and `source_url` when the Remote Store probe succeeds.
 - **source probe config**: `DEEPBOOK_ENV=testnet|mainnet`, `SOURCE_STATUS_TIMEOUT_MS` (default `5000`), `SOURCE_STATUS_CACHE_SEC` (default `15`).
+- **metrics endpoint**: `/metrics` exposes Prometheus-compatible gauges aligned with `/v1/deepbook/status`.
 - **metadata coverage**: current `/assets` + `/pools` responses reflect the repo-local seeded catalog, not full chain-wide discovery.
 - **top markets**: `window=1h|24h|7d`, `sort=volume_quote|trades`, `limit=1..100` (default `20`).
 - **window (pool metrics)**: allowed `1h`, `24h`; default `1h`.
