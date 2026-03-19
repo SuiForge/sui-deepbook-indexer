@@ -107,4 +107,5 @@ Field semantics: `docs/DATA_CONTRACT.md`.
 
 Current compatibility notes:
 - `execution/fills` and `execution/lifecycle` return `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`
-- `execution/summary` and the current WebSocket trade stream still use the legacy `ts` semantics until a later rollout
+- `execution/summary` now uses `COALESCE(event_ts, checkpoint_ts, ts)` for window filtering and first/last price semantics
+- WebSocket trade events now emit `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`, while live delivery still follows checkpoint order

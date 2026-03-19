@@ -122,8 +122,7 @@
 
 因此：
 - 表级兼容列 `ts` 的语义仍更接近 **checkpoint 时间代理值**
-- `execution/fills` 与 `execution/lifecycle` 的 `ts_ms` 已优先读取 `COALESCE(event_ts, checkpoint_ts, ts)`
-- `execution/summary` 与当前 WebSocket trade stream 仍基于旧列 `ts`
+- `execution/fills`、`execution/lifecycle`、`execution/summary` 与当前 WebSocket trade stream 的 `ts_ms` / 时间窗口都已优先读取 `COALESCE(event_ts, checkpoint_ts, ts)`
 
 ### Target v2
 后续统一收敛为三类时间：
@@ -135,7 +134,7 @@ Compatibility note:
 - For rows that existed before migration `004_add_event_contract_v2_columns.sql`, `ingested_at` is a bootstrap / synthetic value created during schema rollout, not a historically exact ingest timestamp
 
 兼容策略：
-- 在 `v2` 真正落地前，execution API 的 `ts_ms` 使用 `COALESCE(event_ts, checkpoint_ts, ts)`，其余仍可继续读 `ts`
+- 在 `v2` 真正落地前，execution-serving 路径统一使用 `COALESCE(event_ts, checkpoint_ts, ts)`
 - 文档与 API 描述必须明确：旧数据会 fallback 到 checkpoint 语义，新数据才会优先体现 `event_ts`
 
 ## 4.3 数值字段
@@ -522,6 +521,9 @@ Current foundation:
 - `order_imbalance_bps = (buy_trades - sell_trades) / trades * 10_000`
 - `execution_score` 为当前服务内部启发式评分，不应视为协议官方指标
 
+时间口径：
+- 当前 summary 的窗口过滤与首尾价格计算均基于 `COALESCE(event_ts, checkpoint_ts, ts)`
+
 ## 10.4 `GET /v1/deepbook/pools/:pool_id/execution/lifecycle`
 
 ### Current 输出语义
@@ -626,6 +628,7 @@ Current foundation:
 - 之后轮询数据库并持续推送新成交
 - 服务端会周期性发送 `ping`
 - 当前支持 `pool` 过滤
+- `ts_ms` 当前来自 `COALESCE(event_ts, checkpoint_ts, ts)`；实时增量游标仍按 checkpoint 顺序推进
 
 ---
 

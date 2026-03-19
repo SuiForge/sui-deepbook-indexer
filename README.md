@@ -33,7 +33,7 @@ Service will automatically:
 4. Serve API on http://localhost:8080
 
 Current v2 foundation notes:
-- `execution/fills` and `execution/lifecycle` now prefer `COALESCE(event_ts, checkpoint_ts, ts)` for `ts_ms`
+- `execution/fills`, `execution/lifecycle`, `execution/summary`, and WS trade `ts_ms` now prefer `COALESCE(event_ts, checkpoint_ts, ts)`
 - new indexer writes persist `checkpoint_ts`, `event_ts`, `package_id`, `module`, `event_name`, and `raw_event`
 - every indexer startup seeds minimal metadata scaffolding for `asset_metadata` / `pool_metadata`
 

@@ -395,8 +395,6 @@ func (s *Store) GetExecutionSummary(ctx context.Context, poolID string, window s
 		dur = time.Hour
 	}
 
-	// Keep summary on the legacy ts column for now so the window semantics do not
-	// shift until the rest of the summary stack is migrated together.
 	query := `
 		SELECT
 			$1 AS pool_id,
@@ -408,11 +406,11 @@ func (s *Store) GetExecutionSummary(ctx context.Context, poolID string, window s
 			COALESCE(SUM(CASE WHEN side = 'sell' THEN 1 ELSE 0 END), 0) AS sell_trades,
 			CASE WHEN COUNT(*) > 0 THEN COALESCE(SUM(quote_sz), 0) / COUNT(*) ELSE 0 END AS avg_trade_notional,
 			CASE WHEN COALESCE(SUM(base_sz), 0) > 0 THEN COALESCE(SUM(price * base_sz), 0) / COALESCE(SUM(base_sz), 0) END AS vwap,
-			(ARRAY_AGG(price ORDER BY ts ASC))[1] AS first_price,
-			(ARRAY_AGG(price ORDER BY ts DESC))[1] AS last_price
+			(ARRAY_AGG(price ORDER BY COALESCE(event_ts, checkpoint_ts, ts) ASC, checkpoint ASC, event_seq ASC))[1] AS first_price,
+			(ARRAY_AGG(price ORDER BY COALESCE(event_ts, checkpoint_ts, ts) DESC, checkpoint DESC, event_seq DESC))[1] AS last_price
 		FROM db_events
 		WHERE pool_id = $1
-		  AND ts >= NOW() - $3::INTERVAL
+		  AND COALESCE(event_ts, checkpoint_ts, ts) >= NOW() - $3::INTERVAL
 	`
 
 	var summary ExecutionSummary
@@ -581,17 +579,17 @@ func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<
 
 	// Send a small backlog first (latest 100), oldest -> newest.
 	{
-		query := `
-			SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
+		query := fmt.Sprintf(`
+			SELECT checkpoint, %s AS effective_ts_ms, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
 			FROM db_events
 			WHERE 1=1
-		`
+		`, compatEventTimeMsExpr)
 		args := []interface{}{}
 		if len(poolFilter) > 0 {
 			query += ` AND pool_id = ANY($1)`
 			args = append(args, poolFilter)
 		}
-		query += ` ORDER BY checkpoint DESC, tx_digest DESC, event_seq DESC LIMIT 100`
+		query += ` ORDER BY COALESCE(event_ts, checkpoint_ts, ts) DESC, checkpoint DESC, tx_digest DESC, event_seq DESC LIMIT 100`
 
 		rows, err := s.pool.Query(ctx, query, args...)
 		if err != nil {
@@ -600,13 +598,11 @@ func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<
 		var backlog []*TradeEvent
 		for rows.Next() {
 			var ev TradeEvent
-			var ts time.Time
-			if err := rows.Scan(&ev.Checkpoint, &ts, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
+			if err := rows.Scan(&ev.Checkpoint, &ev.TsMs, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
 				rows.Close()
 				return err
 			}
 			ev.Type = "trade"
-			ev.TsMs = ts.UnixMilli()
 			backlog = append(backlog, &ev)
 		}
 		rows.Close()
@@ -637,23 +633,23 @@ func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<
 		var query string
 		var args []interface{}
 		if len(poolFilter) > 0 {
-			query = `
-				SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
+			query = fmt.Sprintf(`
+				SELECT checkpoint, %s AS effective_ts_ms, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
 				FROM db_events
 				WHERE pool_id = ANY($1)
 				  AND (checkpoint, tx_digest, event_seq) > ($2, $3, $4)
 				ORDER BY checkpoint ASC, tx_digest ASC, event_seq ASC
 				LIMIT 500
-			`
+			`, compatEventTimeMsExpr)
 			args = []interface{}{poolFilter, cur.checkpoint, cur.txDigest, cur.eventSeq}
 		} else {
-			query = `
-				SELECT checkpoint, ts, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
+			query = fmt.Sprintf(`
+				SELECT checkpoint, %s AS effective_ts_ms, pool_id, side, price, base_sz, quote_sz, maker_bm, taker_bm, tx_digest, event_seq
 				FROM db_events
 				WHERE (checkpoint, tx_digest, event_seq) > ($1, $2, $3)
 				ORDER BY checkpoint ASC, tx_digest ASC, event_seq ASC
 				LIMIT 500
-			`
+			`, compatEventTimeMsExpr)
 			args = []interface{}{cur.checkpoint, cur.txDigest, cur.eventSeq}
 		}
 
@@ -665,13 +661,11 @@ func (s *Store) StreamTrades(ctx context.Context, poolFilter []string, out chan<
 		sent := 0
 		for rows.Next() {
 			var ev TradeEvent
-			var ts time.Time
-			if err := rows.Scan(&ev.Checkpoint, &ts, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
+			if err := rows.Scan(&ev.Checkpoint, &ev.TsMs, &ev.PoolID, &ev.Side, &ev.Price, &ev.BaseSz, &ev.QuoteSz, &ev.MakerBM, &ev.TakerBM, &ev.TxDigest, &ev.EventSeq); err != nil {
 				rows.Close()
 				return err
 			}
 			ev.Type = "trade"
-			ev.TsMs = ts.UnixMilli()
 
 			select {
 			case out <- &ev:
