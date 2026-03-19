@@ -1,3 +1,8 @@
+<!--
+Copyright (c) Mysten Labs, Inc.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Builder Ops + OpenAPI Phase Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
