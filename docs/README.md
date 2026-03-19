@@ -12,6 +12,8 @@
 - execution read-path now prefers `COALESCE(event_ts, checkpoint_ts, ts)` for fills/lifecycle `ts_ms`
 - indexer write-path now persists dual timestamps, metadata columns, and `raw_event`
 - metadata scaffolding (`asset_metadata`, `pool_metadata`) is now created by migration `005` and seeded on startup
+- builder-facing metadata APIs are now available at `/v1/deepbook/assets`, `/v1/deepbook/pools`, `/v1/deepbook/pools/:pool_id/metadata`
+- market discovery and DB-observed service status APIs are now available at `/v1/deepbook/markets/top` and `/v1/deepbook/status`
 
 ## Planning / V2 Docs
 
@@ -25,3 +27,4 @@
 ## Plans
 
 - `docs/plans/2026-03-19-v2-foundation-implementation.md`: v2 数据契约基础阶段实施计划
+- `docs/plans/2026-03-19-builder-mvp-phase1-implementation.md`: builder-grade MVP phase 1 实施计划
