@@ -1,7 +1,21 @@
 # Documentation
 
+## Current Docs
+
 - `docs/USAGE.md`: how to run (Docker / local)
-- `docs/ARCHITECTURE.md`: data flow & design notes
-- `docs/DATA_CONTRACT.md`: schema + API field semantics (v1)
+- `docs/ARCHITECTURE.md`: current architecture notes (legacy / v1-oriented)
+- `docs/DATA_CONTRACT.md`: v2 目标契约 + 当前兼容说明
 - `docs/DEEPBOOK_EVENTS.md`: DeepBook v3 event inventory (from Move sources)
 
+## Planning / V2 Docs
+
+- `docs/PRODUCT_PRD.md`: 产品定位、能力边界、目标用户、阶段目标
+- `docs/ARCHITECTURE_V2.md`: 面向 builder-grade data infra 的 V2 架构设计
+- `docs/FEATURE_BACKLOG.md`: 功能清单、优先级、验收标准与建议开发顺序
+
+> 建议阅读顺序：`PRODUCT_PRD.md` → `ARCHITECTURE_V2.md` → `FEATURE_BACKLOG.md`
+
+
+## Plans
+
+- `docs/plans/2026-03-19-v2-foundation-implementation.md`: v2 数据契约基础阶段实施计划

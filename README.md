@@ -134,7 +134,7 @@ WebSocket trade event:
 - **[docs/README.md](docs/README.md)** - Documentation index
 - **[docs/USAGE.md](docs/USAGE.md)** - Minimal usage guide
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture
-- **[docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)** - Schema & field semantics (v1)
+- **[docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)** - v2 target contract + current compatibility notes
 - **[docs/DEEPBOOK_EVENTS.md](docs/DEEPBOOK_EVENTS.md)** - DeepBook v3 event list (from Move sources)
 
 ## Architecture
