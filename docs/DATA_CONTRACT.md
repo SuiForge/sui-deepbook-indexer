@@ -43,6 +43,21 @@
 - metadata-driven enrichment
 - stable REST / WebSocket conventions
 
+### 2.3 Migration Status
+
+**Current after migration 004**
+- `db_events` and `db_order_events` now introduce schema columns for:
+  - `checkpoint_ts`
+  - `event_ts`
+  - `ingested_at`
+  - `package_id`
+  - `module`
+  - `event_name`
+- Existing rows are backfilled with `checkpoint_ts = ts` and `event_ts = ts` as a compatibility fallback
+- Until the write path is updated in later tasks, newly ingested rows may still have `checkpoint_ts` / `event_ts` as `NULL`
+- Readers must continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe compatibility read path during the phased rollout
+- The write path and API read path are still rolled out incrementally in later tasks
+
 ---
 
 ## 3. 数据范围与事件覆盖
@@ -107,6 +122,9 @@
 - `checkpoint_ts`: checkpoint 的官方时间
 - `event_ts`: event payload 自身携带的业务时间（如存在）
 - `ingested_at`: 本服务实际写入数据库的时间
+
+Compatibility note:
+- For rows that existed before migration `004_add_event_contract_v2_columns.sql`, `ingested_at` is a bootstrap / synthetic value created during schema rollout, not a historically exact ingest timestamp
 
 兼容策略：
 - 在 `v2` 真正落地前，当前 API 中的 `ts_ms` 继续表示当前 `ts`
@@ -207,6 +225,11 @@ ts_ms|checkpoint|event_seq
 
 ### 5.4 Target v2 字段方向
 
+Schema foundation status:
+- `checkpoint_ts`, `event_ts`, `ingested_at`, `package_id`, `module`, and `event_name` are introduced by migration `004_add_event_contract_v2_columns.sql`
+- Historical rows are backfilled from legacy `ts` semantics
+- During the phased rollout, newly ingested rows may still require `COALESCE(event_ts, checkpoint_ts, ts)` until the writer is updated
+
 后续建议将 Trade Fact 语义升级为：
 - `checkpoint`
 - `checkpoint_ts`
@@ -282,6 +305,11 @@ ts_ms|checkpoint|event_seq
 | `raw_event` | 原始事件 JSON | 当前列存在，但实现里通常为 `null` |
 
 ### 6.5 Target v2 字段方向
+
+Schema foundation status:
+- `checkpoint_ts`, `event_ts`, `ingested_at`, `package_id`, `module`, and `event_name` are introduced by migration `004_add_event_contract_v2_columns.sql`
+- Existing rows currently backfill `checkpoint_ts` / `event_ts` from legacy `ts`
+- During the phased rollout, consumers should continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe read path
 
 后续建议补齐：
 - `checkpoint_ts`
@@ -597,6 +625,11 @@ ts_ms|checkpoint|event_seq
 ---
 
 ## 12. 兼容与演进策略
+
+Migration rollout note:
+- Migration `004_add_event_contract_v2_columns.sql` is optimized for the current self-hosted rollout path, not for zero-downtime large-table production migration
+- For large live datasets, prefer a staged rollout: add nullable columns, backfill in batches, create concurrent indexes, then switch writers/readers
+
 
 建议后续按以下方式演进，尽量减少破坏性升级：
 
