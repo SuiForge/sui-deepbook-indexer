@@ -22,12 +22,24 @@ var upgrader = websocket.Upgrader{
 }
 
 type Handler struct {
-	store          *store.Store
+	store          storeBackend
 	singleKey      string
 	wsPingInterval time.Duration
 }
 
-func New(store *store.Store, singleKey string, wsPingInterval time.Duration) *Handler {
+type storeBackend interface {
+	GetPoolMetrics(ctx context.Context, poolID string, window string) (*store.PoolMetrics, error)
+	GetPoolCandles(ctx context.Context, poolID string, window string, interval string) (*store.CandleSeries, error)
+	GetExecutionSummary(ctx context.Context, poolID string, window string) (*store.ExecutionSummary, error)
+	GetOrderLifecycleEvents(ctx context.Context, poolID string, window string, eventType string, limit int, cursor *store.OrderLifecycleCursor) ([]store.OrderLifecycleEvent, error)
+	GetExecutionFills(ctx context.Context, poolID string, window string, limit int, cursor *store.OrderLifecycleCursor) ([]store.ExecutionFill, error)
+	GetBMVolume(ctx context.Context, bmID string, window string, poolFilter []string) (*store.BMVolume, error)
+	StreamTrades(ctx context.Context, poolFilter []string, out chan<- *store.TradeEvent) error
+}
+
+var _ storeBackend = (*store.Store)(nil)
+
+func New(store storeBackend, singleKey string, wsPingInterval time.Duration) *Handler {
 	if wsPingInterval <= 0 {
 		wsPingInterval = 15 * time.Second
 	}

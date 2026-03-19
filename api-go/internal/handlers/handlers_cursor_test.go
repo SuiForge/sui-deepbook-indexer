@@ -1,13 +1,49 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/Lab-JY/deepbook-indexer/api-go/internal/store"
 )
+
+type fakeStore struct{}
+
+func (f *fakeStore) GetPoolMetrics(context.Context, string, string) (*store.PoolMetrics, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetPoolCandles(context.Context, string, string, string) (*store.CandleSeries, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetExecutionSummary(context.Context, string, string) (*store.ExecutionSummary, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetOrderLifecycleEvents(context.Context, string, string, string, int, *store.OrderLifecycleCursor) ([]store.OrderLifecycleEvent, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetExecutionFills(context.Context, string, string, int, *store.OrderLifecycleCursor) ([]store.ExecutionFill, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetBMVolume(context.Context, string, string, []string) (*store.BMVolume, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) StreamTrades(context.Context, []string, chan<- *store.TradeEvent) error {
+	return nil
+}
+
+var _ storeBackend = (*fakeStore)(nil)
 
 func TestParseLifecycleCursorValid(t *testing.T) {
 	c, err := parseLifecycleCursor("1700000000000|12345|7")
@@ -29,6 +65,13 @@ func TestParseLifecycleCursorRoundTripShape(t *testing.T) {
 
 	if got := fmt.Sprintf("%d|%d|%d", c.TsMs, c.Checkpoint, c.EventSeq); got != raw {
 		t.Fatalf("expected round-trip cursor %q, got %q", raw, got)
+	}
+}
+
+func TestNewDefaultsWSPingInterval(t *testing.T) {
+	h := New(&fakeStore{}, "", 0)
+	if h.wsPingInterval != 15*time.Second {
+		t.Fatalf("expected default ws ping interval, got %s", h.wsPingInterval)
 	}
 }
 
