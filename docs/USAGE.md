@@ -94,7 +94,9 @@ export DEEPBOOK_ENV="mainnet"
 ## API Endpoints
 
 - `GET /health`
+- `GET /v1/deepbook/status`
 - `GET /v1/deepbook/assets`
+- `GET /v1/deepbook/markets/top?window=1h|24h|7d&sort=volume_quote|trades&limit=1..100`
 - `GET /v1/deepbook/pools`
 - `GET /v1/deepbook/pools/:pool_id/metadata`
 - `GET /v1/deepbook/pools/:pool_id/metrics?window=1h|24h`
@@ -109,15 +111,19 @@ See architecture details in `docs/ARCHITECTURE.md`.
 Field semantics: `docs/DATA_CONTRACT.md`.
 
 Current compatibility notes:
+- `/status` currently exposes DB-observed processed checkpoint and table counts; remote latest-checkpoint lag is not yet surfaced
 - `/assets`, `/pools`, `/pools/:pool_id/metadata` expose the current seeded metadata catalog for builder discovery; coverage is intentionally partial during rollout
+- `/markets/top` is backed by `pool_metrics_1m` and joins seeded pool metadata when available
 - `execution/fills` and `execution/lifecycle` return `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`
 - `execution/summary` now uses `COALESCE(event_ts, checkpoint_ts, ts)` for window filtering and first/last price semantics
 - WebSocket trade events now emit `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`, while live delivery still follows checkpoint order
 
-## Metadata API Quick Checks
+## Builder API Quick Checks
 
 ```bash
+curl "http://localhost:8080/v1/deepbook/status"
 curl "http://localhost:8080/v1/deepbook/assets"
+curl "http://localhost:8080/v1/deepbook/markets/top?window=24h&sort=volume_quote&limit=20"
 curl "http://localhost:8080/v1/deepbook/pools"
 curl "http://localhost:8080/v1/deepbook/pools/{pool_id}/metadata"
 ```

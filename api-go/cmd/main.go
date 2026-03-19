@@ -40,6 +40,7 @@ func main() {
 	api.Use(authMiddleware)
 	{
 		api.GET("/assets", h.GetAssets)
+		api.GET("/markets/top", h.GetTopMarkets)
 		api.GET("/pools", h.GetPools)
 		api.GET("/pools/:pool_id/metadata", h.GetPoolMetadata)
 		api.GET("/pools/:pool_id/metrics", h.GetPoolMetrics)
@@ -48,6 +49,7 @@ func main() {
 		api.GET("/pools/:pool_id/execution/lifecycle", h.GetOrderLifecycle)
 		api.GET("/pools/:pool_id/execution/fills", h.GetExecutionFills)
 		api.GET("/bm/:bm_id/volume", h.GetBMVolume)
+		api.GET("/status", h.GetServiceStatus)
 		api.GET("/trades", h.TradesWS)
 	}
 

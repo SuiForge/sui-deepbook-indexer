@@ -173,6 +173,31 @@ type PoolMetadata struct {
 	QuoteAsset   *AssetMetadata `json:"quote_asset,omitempty"`
 }
 
+type TopMarket struct {
+	PoolID       string           `json:"pool_id"`
+	BaseAssetID  *string          `json:"base_asset_id,omitempty"`
+	QuoteAssetID *string          `json:"quote_asset_id,omitempty"`
+	PackageID    *string          `json:"package_id,omitempty"`
+	Status       *string          `json:"status,omitempty"`
+	Pair         *string          `json:"pair,omitempty"`
+	Trades       int64            `json:"trades"`
+	VolumeBase   decimal.Decimal  `json:"volume_base"`
+	VolumeQuote  decimal.Decimal  `json:"volume_quote"`
+	VWAP         *decimal.Decimal `json:"vwap,omitempty"`
+	LastPrice    *decimal.Decimal `json:"last_price,omitempty"`
+}
+
+type ServiceStatus struct {
+	Status              string    `json:"status"`
+	ProcessedCheckpoint int64     `json:"processed_checkpoint"`
+	IndexerUpdatedAt    time.Time `json:"indexer_updated_at"`
+	TradeEvents         int64     `json:"trade_events"`
+	OrderEvents         int64     `json:"order_events"`
+	AssetMetadataCount  int64     `json:"asset_metadata_count"`
+	PoolMetadataCount   int64     `json:"pool_metadata_count"`
+	DistinctPools       int64     `json:"distinct_pools"`
+}
+
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
 	var interval string
 	var dur time.Duration
@@ -346,6 +371,104 @@ func (s *Store) GetPoolMetadata(ctx context.Context, poolID string) (*PoolMetada
 	}
 
 	return &items[0], nil
+}
+
+func (s *Store) ListTopMarkets(ctx context.Context, window string, sort string, limit int) ([]TopMarket, error) {
+	interval := "24 hours"
+	switch window {
+	case "1h":
+		interval = "1 hour"
+	case "7d":
+		interval = "7 days"
+	default:
+		interval = "24 hours"
+	}
+
+	orderBy := "ranked.volume_quote DESC, ranked.pool_id ASC"
+	if sort == "trades" {
+		orderBy = "ranked.trades DESC, ranked.pool_id ASC"
+	}
+
+	query := fmt.Sprintf(`
+		WITH ranked AS (
+			SELECT
+				m.pool_id,
+				COALESCE(SUM(m.trades), 0) AS trades,
+				COALESCE(SUM(m.volume_base), 0) AS volume_base,
+				COALESCE(SUM(m.volume_quote), 0) AS volume_quote,
+				CASE WHEN SUM(m.volume_base) > 0 THEN SUM(m.vwap * m.volume_base) / SUM(m.volume_base) END AS vwap,
+				(ARRAY_AGG(m.last_price ORDER BY m.bucket_start DESC))[1] AS last_price
+			FROM pool_metrics_1m m
+			WHERE m.bucket_start >= NOW() - $1::INTERVAL
+			GROUP BY m.pool_id
+		)
+		SELECT
+			ranked.pool_id,
+			p.base_asset_id,
+			p.quote_asset_id,
+			p.package_id,
+			p.status,
+			ba.symbol,
+			qa.symbol,
+			ranked.trades,
+			ranked.volume_base,
+			ranked.volume_quote,
+			ranked.vwap,
+			ranked.last_price
+		FROM ranked
+		LEFT JOIN pool_metadata p ON p.pool_id = ranked.pool_id
+		LEFT JOIN asset_metadata ba ON ba.asset_id = p.base_asset_id
+		LEFT JOIN asset_metadata qa ON qa.asset_id = p.quote_asset_id
+		ORDER BY %s
+		LIMIT $2
+	`, orderBy)
+
+	rows, err := s.pool.Query(ctx, query, interval, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanTopMarketRows(rows)
+}
+
+func (s *Store) GetServiceStatus(ctx context.Context) (*ServiceStatus, error) {
+	var item ServiceStatus
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			s.processed_checkpoint,
+			s.updated_at,
+			(SELECT COUNT(*) FROM db_events) AS trade_events,
+			(SELECT COUNT(*) FROM db_order_events) AS order_events,
+			(SELECT COUNT(*) FROM asset_metadata) AS asset_metadata_count,
+			(SELECT COUNT(*) FROM pool_metadata) AS pool_metadata_count,
+			(
+				SELECT COUNT(DISTINCT pool_id)
+				FROM (
+					SELECT pool_id FROM db_events
+					UNION
+					SELECT pool_id FROM db_order_events
+					UNION
+					SELECT pool_id FROM pool_metadata
+				) pools
+			) AS distinct_pools
+		FROM indexer_state s
+		WHERE s.id = 1
+	`).Scan(
+		&item.ProcessedCheckpoint,
+		&item.IndexerUpdatedAt,
+		&item.TradeEvents,
+		&item.OrderEvents,
+		&item.AssetMetadataCount,
+		&item.PoolMetadataCount,
+		&item.DistinctPools,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	item.Status = "ok"
+	return &item, nil
 }
 
 func (s *Store) GetPoolCandles(ctx context.Context, poolID string, window string, interval string) (*CandleSeries, error) {
@@ -617,6 +740,47 @@ func clamp(v float64, min float64, max float64) float64 {
 		return max
 	}
 	return v
+}
+
+func scanTopMarketRows(rows pgxRows) ([]TopMarket, error) {
+	out := make([]TopMarket, 0)
+	for rows.Next() {
+		var (
+			item        TopMarket
+			baseSymbol  *string
+			quoteSymbol *string
+		)
+
+		if err := rows.Scan(
+			&item.PoolID,
+			&item.BaseAssetID,
+			&item.QuoteAssetID,
+			&item.PackageID,
+			&item.Status,
+			&baseSymbol,
+			&quoteSymbol,
+			&item.Trades,
+			&item.VolumeBase,
+			&item.VolumeQuote,
+			&item.VWAP,
+			&item.LastPrice,
+		); err != nil {
+			return nil, err
+		}
+
+		if baseSymbol != nil && quoteSymbol != nil {
+			pair := fmt.Sprintf("%s/%s", *baseSymbol, *quoteSymbol)
+			item.Pair = &pair
+		}
+
+		out = append(out, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
 func scanPoolMetadataRows(rows pgxRows) ([]PoolMetadata, error) {

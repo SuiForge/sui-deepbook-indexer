@@ -507,7 +507,56 @@ Current foundation:
 - 当 metadata 中不存在该 pool 时返回 `404`
 - 当前 detail API 仍然只反映已 seed / 已 curated 的目录数据
 
-## 10.4 `GET /v1/deepbook/pools/:pool_id/metrics`
+## 10.4 `GET /v1/deepbook/markets/top`
+
+### Current 输出语义
+
+返回：
+- `window`
+- `sort`
+- `limit`
+- `count`
+- `markets[]`
+
+`markets[]` 包含：
+- `pool_id`
+- `base_asset_id`
+- `quote_asset_id`
+- `package_id`
+- `status`
+- `pair`
+- `trades`
+- `volume_base`
+- `volume_quote`
+- `vwap`
+- `last_price`
+
+说明：
+- 当前窗口支持：`1h`、`24h`、`7d`
+- 当前排序支持：`volume_quote`、`trades`
+- `limit` 当前默认 `20`，上限 clamp 为 `100`
+- 当前实现基于 `pool_metrics_1m` 聚合，并在 metadata 可用时补充 `base_asset_id` / `quote_asset_id` / `pair`
+
+## 10.5 `GET /v1/deepbook/status`
+
+### Current 输出语义
+
+返回：
+- `status`
+- `processed_checkpoint`
+- `indexer_updated_at`
+- `trade_events`
+- `order_events`
+- `asset_metadata_count`
+- `pool_metadata_count`
+- `distinct_pools`
+
+说明：
+- 当前 `status` 成功时固定为 `ok`
+- 该接口当前只暴露数据库可直接观测到的处理进度与计数摘要
+- 尚未主动查询 Remote Store 最新 checkpoint，因此当前不包含 remote lag
+
+## 10.6 `GET /v1/deepbook/pools/:pool_id/metrics`
 
 ### Current 输出语义
 
@@ -531,7 +580,7 @@ Current foundation:
 - `start_ts` / `end_ts` 为 API 计算窗口边界，不是数据库字段原样透传
 - `vwap` 使用分钟聚合结果按 `volume_base` 加权再聚合
 
-## 10.5 `GET /v1/deepbook/pools/:pool_id/candles`
+## 10.7 `GET /v1/deepbook/pools/:pool_id/candles`
 
 ### Current 输出语义
 
@@ -559,7 +608,7 @@ Current foundation:
 - 当前 interval 支持：`1m`、`5m`、`15m`、`1h`
 - 当 interval > `1m` 时，API 基于 `pool_metrics_1m` 二次聚合
 
-## 10.6 `GET /v1/deepbook/pools/:pool_id/execution/summary`
+## 10.8 `GET /v1/deepbook/pools/:pool_id/execution/summary`
 
 ### Current 输出语义
 
@@ -585,7 +634,7 @@ Current foundation:
 时间口径：
 - 当前 summary 的窗口过滤与首尾价格计算均基于 `COALESCE(event_ts, checkpoint_ts, ts)`
 
-## 10.7 `GET /v1/deepbook/pools/:pool_id/execution/lifecycle`
+## 10.9 `GET /v1/deepbook/pools/:pool_id/execution/lifecycle`
 
 ### Current 输出语义
 
@@ -617,7 +666,7 @@ Current foundation:
 - `next_cursor` 仅当返回条数等于 limit 且非空时生成
 - 当前支持按 `event_type` 过滤
 
-## 10.8 `GET /v1/deepbook/pools/:pool_id/execution/fills`
+## 10.10 `GET /v1/deepbook/pools/:pool_id/execution/fills`
 
 ### Current 输出语义
 
@@ -645,7 +694,7 @@ Current foundation:
 - 字段 `base_size` / `quote_size` 是 API 命名，数据库对应 `base_sz` / `quote_sz`
 - `ts_ms` 当前来自 `COALESCE(event_ts, checkpoint_ts, ts)`
 
-## 10.9 `GET /v1/deepbook/bm/:bm_id/volume`
+## 10.11 `GET /v1/deepbook/bm/:bm_id/volume`
 
 ### Current 输出语义
 
@@ -666,7 +715,7 @@ Current foundation:
 - 当前窗口支持：`24h`、`7d`
 - 支持可选 `pool` 过滤
 
-## 10.10 `WS /v1/deepbook/trades`
+## 10.12 `WS /v1/deepbook/trades`
 
 ### Current 输出语义
 
@@ -703,6 +752,7 @@ Current foundation:
 4. 缺少 normalized 数值字段
 5. `OrderExpired` 尚未进入主索引流程
 6. 当前 `execution_score` 是内部启发式指标，需要在对外文档中避免被误解为协议原生指标
+7. `/status` 当前还没有主动对比 Remote Store 最新 checkpoint，因此暂不提供 remote lag
 
 ---
 

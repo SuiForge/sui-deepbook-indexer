@@ -17,6 +17,7 @@ Checkpoint-driven indexer that reads Sui checkpoint data from Remote Store, extr
 - ✅ Idempotent ingestion with replay capability
 - ✅ Metadata scaffolding (`asset_metadata`, `pool_metadata`) with startup seed
 - ✅ Builder-facing metadata discovery APIs (`/assets`, `/pools`, `/pools/:pool_id/metadata`)
+- ✅ Market discovery + service status APIs (`/markets/top`, `/status`)
 - ✅ Remote Store-first ingestion with environment-based package selection
 - ✅ REST API + WebSocket streaming
 - ✅ Docker Compose one-click deployment
@@ -38,12 +39,19 @@ Current v2 foundation notes:
 - new indexer writes persist `checkpoint_ts`, `event_ts`, `package_id`, `module`, `event_name`, and `raw_event`
 - every indexer startup seeds minimal metadata scaffolding for `asset_metadata` / `pool_metadata`
 - metadata REST endpoints expose the currently seeded/scaffolded asset + pool catalog for builder discovery
+- `/v1/deepbook/status` currently reports DB-observed service state; remote latest-checkpoint lag is not yet included
 
 ## API Usage
 
 ```bash
+# Service status
+curl "http://localhost:8080/v1/deepbook/status"
+
 # Asset catalog
 curl "http://localhost:8080/v1/deepbook/assets"
+
+# Top markets (default: 24h by quote volume)
+curl "http://localhost:8080/v1/deepbook/markets/top"
 
 # Pool catalog
 curl "http://localhost:8080/v1/deepbook/pools"
@@ -81,7 +89,9 @@ wscat -H "Authorization: Bearer <API_SINGLE_KEY>" -c "ws://localhost:8080/v1/dee
 
 ### Parameters
 
+- **status semantics**: `/v1/deepbook/status` reflects database-observed checkpoint and row counts; it does not yet fetch remote latest checkpoint / lag.
 - **metadata coverage**: current `/assets` + `/pools` responses reflect the repo-local seeded catalog, not full chain-wide discovery.
+- **top markets**: `window=1h|24h|7d`, `sort=volume_quote|trades`, `limit=1..100` (default `20`).
 - **window (pool metrics)**: allowed `1h`, `24h`; default `1h`.
 - **window (pool candles)**: allowed `1h`, `24h`, `7d`; default `1h`.
 - **interval (pool candles)**: allowed `1m`, `5m`, `15m`, `1h`; default `1m`.

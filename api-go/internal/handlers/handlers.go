@@ -31,6 +31,8 @@ type storeBackend interface {
 	ListAssets(ctx context.Context) ([]store.AssetMetadata, error)
 	ListPools(ctx context.Context) ([]store.PoolMetadata, error)
 	GetPoolMetadata(ctx context.Context, poolID string) (*store.PoolMetadata, error)
+	ListTopMarkets(ctx context.Context, window string, sort string, limit int) ([]store.TopMarket, error)
+	GetServiceStatus(ctx context.Context) (*store.ServiceStatus, error)
 	GetPoolMetrics(ctx context.Context, poolID string, window string) (*store.PoolMetrics, error)
 	GetPoolCandles(ctx context.Context, poolID string, window string, interval string) (*store.CandleSeries, error)
 	GetExecutionSummary(ctx context.Context, poolID string, window string) (*store.ExecutionSummary, error)
@@ -93,6 +95,40 @@ func (h *Handler) GetPoolMetadata(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, pool)
+}
+
+func (h *Handler) GetTopMarkets(c *gin.Context) {
+	window := normalizeTopMarketsWindow(c.DefaultQuery("window", "24h"))
+	sort := normalizeTopMarketsSort(c.DefaultQuery("sort", "volume_quote"))
+	limit := parseTopMarketsLimit(c.DefaultQuery("limit", "20"))
+
+	markets, err := h.store.ListTopMarkets(c.Request.Context(), window, sort, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"window":  window,
+		"sort":    sort,
+		"limit":   limit,
+		"count":   len(markets),
+		"markets": markets,
+	})
+}
+
+func (h *Handler) GetServiceStatus(c *gin.Context) {
+	status, err := h.store.GetServiceStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if status == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "service status unavailable"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
 }
 
 func (h *Handler) AuthMiddleware() gin.HandlerFunc {
@@ -230,6 +266,35 @@ func (h *Handler) GetExecutionFills(c *gin.Context) {
 		"next_cursor": nextCursor,
 		"fills":       fills,
 	})
+}
+
+func normalizeTopMarketsWindow(raw string) string {
+	switch raw {
+	case "1h", "24h", "7d":
+		return raw
+	default:
+		return "24h"
+	}
+}
+
+func normalizeTopMarketsSort(raw string) string {
+	switch raw {
+	case "trades", "volume_quote":
+		return raw
+	default:
+		return "volume_quote"
+	}
+}
+
+func parseTopMarketsLimit(raw string) int {
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
 }
 
 func parseLifecycleCursor(raw string) (*store.OrderLifecycleCursor, error) {

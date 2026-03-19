@@ -15,9 +15,14 @@ import (
 )
 
 type fakeStore struct {
-	assets   []store.AssetMetadata
-	pools    []store.PoolMetadata
-	poolByID map[string]*store.PoolMetadata
+	assets               []store.AssetMetadata
+	pools                []store.PoolMetadata
+	poolByID             map[string]*store.PoolMetadata
+	topMarkets           []store.TopMarket
+	serviceStatus        *store.ServiceStatus
+	lastTopMarketsWindow string
+	lastTopMarketsSort   string
+	lastTopMarketsLimit  int
 }
 
 type assetsResponse struct {
@@ -28,6 +33,14 @@ type assetsResponse struct {
 type poolsResponse struct {
 	Count int                  `json:"count"`
 	Pools []store.PoolMetadata `json:"pools"`
+}
+
+type topMarketsResponse struct {
+	Window  string            `json:"window"`
+	Sort    string            `json:"sort"`
+	Limit   int               `json:"limit"`
+	Count   int               `json:"count"`
+	Markets []store.TopMarket `json:"markets"`
 }
 
 func decodeJSON[T any](t *testing.T, body *httptest.ResponseRecorder) T {
@@ -104,6 +117,17 @@ func (f *fakeStore) GetPoolMetadata(_ context.Context, poolID string) (*store.Po
 		return nil, nil
 	}
 	return f.poolByID[poolID], nil
+}
+
+func (f *fakeStore) ListTopMarkets(_ context.Context, window string, sort string, limit int) ([]store.TopMarket, error) {
+	f.lastTopMarketsWindow = window
+	f.lastTopMarketsSort = sort
+	f.lastTopMarketsLimit = limit
+	return f.topMarkets, nil
+}
+
+func (f *fakeStore) GetServiceStatus(context.Context) (*store.ServiceStatus, error) {
+	return f.serviceStatus, nil
 }
 
 func (f *fakeStore) GetPoolMetrics(context.Context, string, string) (*store.PoolMetrics, error) {
@@ -320,5 +344,99 @@ func TestGetPoolMetadataSuccess(t *testing.T) {
 	}
 	if resp.QuoteAsset == nil || resp.QuoteAsset.AssetID != "usdc" {
 		t.Fatalf("expected quote asset usdc, got %#v", resp.QuoteAsset)
+	}
+}
+
+func TestGetTopMarketsFallsBackToDefaultLimit(t *testing.T) {
+	fake := &fakeStore{
+		topMarkets: []store.TopMarket{
+			{
+				PoolID:       "0xpool",
+				BaseAssetID:  stringPtr("sui"),
+				QuoteAssetID: stringPtr("usdc"),
+				Pair:         stringPtr("SUI/USDC"),
+				Trades:       42,
+			},
+		},
+	}
+	h := New(fake, "", 0)
+
+	c, w := newTestContext(http.MethodGet, "/v1/deepbook/markets/top?limit=bad", nil)
+	h.GetTopMarkets(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if fake.lastTopMarketsLimit != 20 {
+		t.Fatalf("expected default limit 20, got %d", fake.lastTopMarketsLimit)
+	}
+	if fake.lastTopMarketsWindow != "24h" {
+		t.Fatalf("expected default window 24h, got %q", fake.lastTopMarketsWindow)
+	}
+	if fake.lastTopMarketsSort != "volume_quote" {
+		t.Fatalf("expected default sort volume_quote, got %q", fake.lastTopMarketsSort)
+	}
+
+	resp := decodeJSON[topMarketsResponse](t, w)
+	if resp.Limit != 20 {
+		t.Fatalf("expected response limit 20, got %d", resp.Limit)
+	}
+	if resp.Count != 1 {
+		t.Fatalf("expected count 1, got %d", resp.Count)
+	}
+}
+
+func TestGetTopMarketsClampsLimit(t *testing.T) {
+	fake := &fakeStore{}
+	h := New(fake, "", 0)
+
+	c, w := newTestContext(http.MethodGet, "/v1/deepbook/markets/top?window=7d&sort=trades&limit=999", nil)
+	h.GetTopMarkets(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if fake.lastTopMarketsLimit != 100 {
+		t.Fatalf("expected clamped limit 100, got %d", fake.lastTopMarketsLimit)
+	}
+	if fake.lastTopMarketsWindow != "7d" {
+		t.Fatalf("expected window 7d, got %q", fake.lastTopMarketsWindow)
+	}
+	if fake.lastTopMarketsSort != "trades" {
+		t.Fatalf("expected sort trades, got %q", fake.lastTopMarketsSort)
+	}
+}
+
+func TestGetServiceStatusSuccess(t *testing.T) {
+	updatedAt := time.Date(2026, time.March, 19, 12, 0, 0, 0, time.UTC)
+	h := New(&fakeStore{
+		serviceStatus: &store.ServiceStatus{
+			Status:              "ok",
+			ProcessedCheckpoint: 12345,
+			IndexerUpdatedAt:    updatedAt,
+			TradeEvents:         100,
+			OrderEvents:         50,
+			AssetMetadataCount:  2,
+			PoolMetadataCount:   1,
+			DistinctPools:       3,
+		},
+	}, "", 0)
+
+	c, w := newTestContext(http.MethodGet, "/v1/deepbook/status", nil)
+	h.GetServiceStatus(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	resp := decodeJSON[store.ServiceStatus](t, w)
+	if resp.Status != "ok" {
+		t.Fatalf("expected status ok, got %q", resp.Status)
+	}
+	if resp.ProcessedCheckpoint != 12345 {
+		t.Fatalf("expected processed checkpoint 12345, got %d", resp.ProcessedCheckpoint)
+	}
+	if !resp.IndexerUpdatedAt.Equal(updatedAt) {
+		t.Fatalf("expected updated_at %s, got %s", updatedAt, resp.IndexerUpdatedAt)
 	}
 }
