@@ -131,6 +131,11 @@ type OrderLifecycleCursor struct {
 	EventSeq   int32
 }
 
+const (
+	compatEventTimeExpr   = "COALESCE(event_ts, checkpoint_ts, ts)"
+	compatEventTimeMsExpr = "CAST(EXTRACT(EPOCH FROM COALESCE(event_ts, checkpoint_ts, ts)) * 1000 AS BIGINT)"
+)
+
 type ExecutionFill struct {
 	Checkpoint int64           `json:"checkpoint"`
 	TsMs       int64           `json:"ts_ms"`
@@ -390,6 +395,8 @@ func (s *Store) GetExecutionSummary(ctx context.Context, poolID string, window s
 		dur = time.Hour
 	}
 
+	// Keep summary on the legacy ts column for now so the window semantics do not
+	// shift until the rest of the summary stack is migrated together.
 	query := `
 		SELECT
 			$1 AS pool_id,
@@ -490,9 +497,9 @@ func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, wind
 		limit = 1000
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		SELECT checkpoint,
-		       EXTRACT(EPOCH FROM ts) * 1000 AS ts_ms,
+		       %s AS ts_ms,
 		       pool_id,
 		       event_type,
 		       order_id,
@@ -506,8 +513,8 @@ func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, wind
 		       event_seq
 		FROM db_order_events
 		WHERE pool_id = $1
-		  AND ts >= NOW() - $2::INTERVAL
-	`
+		  AND %s >= NOW() - $2::INTERVAL
+	`, compatEventTimeMsExpr, compatEventTimeExpr)
 
 	args := []interface{}{poolID, interval}
 	nextArg := 3
@@ -518,12 +525,12 @@ func (s *Store) GetOrderLifecycleEvents(ctx context.Context, poolID string, wind
 	}
 
 	if cursor != nil {
-		query += fmt.Sprintf(" AND ((EXTRACT(EPOCH FROM ts) * 1000) < $%d OR ((EXTRACT(EPOCH FROM ts) * 1000) = $%d AND (checkpoint, event_seq) < ($%d, $%d)))", nextArg, nextArg, nextArg+1, nextArg+2)
+		query += fmt.Sprintf(" AND ((%s) < $%d OR ((%s) = $%d AND (checkpoint, event_seq) < ($%d, $%d)))", compatEventTimeMsExpr, nextArg, compatEventTimeMsExpr, nextArg, nextArg+1, nextArg+2)
 		args = append(args, cursor.TsMs, cursor.Checkpoint, cursor.EventSeq)
 		nextArg += 3
 	}
 
-	query += fmt.Sprintf(" ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $%d", nextArg)
+	query += fmt.Sprintf(" ORDER BY %s DESC, checkpoint DESC, event_seq DESC LIMIT $%d", compatEventTimeExpr, nextArg)
 	args = append(args, limit)
 
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -710,9 +717,9 @@ func (s *Store) GetExecutionFills(ctx context.Context, poolID string, window str
 		limit = 1000
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		SELECT checkpoint,
-		       EXTRACT(EPOCH FROM ts) * 1000 AS ts_ms,
+		       %s AS ts_ms,
 		       pool_id,
 		       side,
 		       price,
@@ -724,18 +731,18 @@ func (s *Store) GetExecutionFills(ctx context.Context, poolID string, window str
 		       event_seq
 		FROM db_events
 		WHERE pool_id = $1
-		  AND ts >= NOW() - $2::INTERVAL
-	`
+		  AND %s >= NOW() - $2::INTERVAL
+	`, compatEventTimeMsExpr, compatEventTimeExpr)
 
 	args := []interface{}{poolID, interval}
 	nextArg := 3
 	if cursor != nil {
-		query += fmt.Sprintf(" AND ((EXTRACT(EPOCH FROM ts) * 1000) < $%d OR ((EXTRACT(EPOCH FROM ts) * 1000) = $%d AND (checkpoint, event_seq) < ($%d, $%d)))", nextArg, nextArg, nextArg+1, nextArg+2)
+		query += fmt.Sprintf(" AND ((%s) < $%d OR ((%s) = $%d AND (checkpoint, event_seq) < ($%d, $%d)))", compatEventTimeMsExpr, nextArg, compatEventTimeMsExpr, nextArg, nextArg+1, nextArg+2)
 		args = append(args, cursor.TsMs, cursor.Checkpoint, cursor.EventSeq)
 		nextArg += 3
 	}
 
-	query += fmt.Sprintf(" ORDER BY ts DESC, checkpoint DESC, event_seq DESC LIMIT $%d", nextArg)
+	query += fmt.Sprintf(" ORDER BY %s DESC, checkpoint DESC, event_seq DESC LIMIT $%d", compatEventTimeExpr, nextArg)
 	args = append(args, limit)
 
 	rows, err := s.pool.Query(ctx, query, args...)

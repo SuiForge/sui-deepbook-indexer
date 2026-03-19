@@ -112,11 +112,13 @@
 ## 4.2 时间字段
 
 ### Current
-当前事实表与 API 中的时间字段主要来自数据库列 `ts`，其来源是：
+当前数据库事实表中的兼容列 `ts` 仍来自：
 - `checkpoint.checkpoint_summary.timestamp_ms`
 
-因此当前语义更准确地说是：
-- **checkpoint 时间代理值**
+因此：
+- 表级兼容列 `ts` 的语义仍更接近 **checkpoint 时间代理值**
+- `execution/fills` 与 `execution/lifecycle` 的 `ts_ms` 已优先读取 `COALESCE(event_ts, checkpoint_ts, ts)`
+- `execution/summary` 与当前 WebSocket trade stream 仍基于旧列 `ts`
 
 ### Target v2
 后续统一收敛为三类时间：
@@ -128,8 +130,8 @@ Compatibility note:
 - For rows that existed before migration `004_add_event_contract_v2_columns.sql`, `ingested_at` is a bootstrap / synthetic value created during schema rollout, not a historically exact ingest timestamp
 
 兼容策略：
-- 在 `v2` 真正落地前，当前 API 中的 `ts_ms` 继续表示当前 `ts`
-- 文档与 API 描述必须明确它不是严格意义上的事件发生时间
+- 在 `v2` 真正落地前，execution API 的 `ts_ms` 使用 `COALESCE(event_ts, checkpoint_ts, ts)`，其余仍可继续读 `ts`
+- 文档与 API 描述必须明确：旧数据会 fallback 到 checkpoint 语义，新数据才会优先体现 `event_ts`
 
 ## 4.3 数值字段
 
@@ -175,12 +177,12 @@ ts_ms|checkpoint|event_seq
 ```
 
 语义：
-- `ts_ms`: 当前记录的 `ts` 毫秒值
+- `ts_ms`: 当前记录的 `COALESCE(event_ts, checkpoint_ts, ts)` 毫秒值
 - `checkpoint`: checkpoint 序号
 - `event_seq`: 事件在交易内的序号
 
 排序规则：
-- `ORDER BY ts DESC, checkpoint DESC, event_seq DESC`
+- `ORDER BY COALESCE(event_ts, checkpoint_ts, ts) DESC, checkpoint DESC, event_seq DESC`
 
 ---
 
@@ -533,7 +535,7 @@ Schema foundation status:
 - `event_seq`
 
 说明：
-- `ts_ms` 当前来自表里的 `ts`
+- `ts_ms` 当前来自 `COALESCE(event_ts, checkpoint_ts, ts)`
 - `next_cursor` 仅当返回条数等于 limit 且非空时生成
 - 当前支持按 `event_type` 过滤
 
@@ -563,7 +565,7 @@ Schema foundation status:
 
 说明：
 - 字段 `base_size` / `quote_size` 是 API 命名，数据库对应 `base_sz` / `quote_sz`
-- `ts_ms` 当前仍对应 `ts`
+- `ts_ms` 当前来自 `COALESCE(event_ts, checkpoint_ts, ts)`
 
 ## 10.6 `GET /v1/deepbook/bm/:bm_id/volume`
 
