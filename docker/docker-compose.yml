@@ -28,14 +28,15 @@ services:
       PGDATABASE: deepbook_indexer
     volumes:
       - ../migrations:/migrations:ro
-    command: >
-      sh -c "
+    command:
+      - sh
+      - -c
+      - |
         for f in /migrations/*.sql; do
-          echo \"Running migration: $$f\";
-          psql -f \"$$f\" || exit 1;
+          echo "Running migration: $$f";
+          psql -f "$$f" || exit 1;
         done;
-        echo \"All migrations completed successfully\";
-      "
+        echo "All migrations completed successfully";
 
   api:
     build:
@@ -64,11 +65,11 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://sui:sui@postgres:5432/deepbook_indexer
-      # Testnet config (change to mainnet if needed)
-      RPC_API_URL: https://fullnode.testnet.sui.io:443
-      DEEPBOOK_PACKAGE_ID: "0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc"
-      DEEPBOOK_EVENT_TYPE: OrderFilled
+      DEEPBOOK_ENV: testnet
       INDEXER_POLL_INTERVAL_MS: "1000"
+      INDEXER_REQUEST_TIMEOUT_MS: "30000"
+      INDEXER_BACKOFF_BASE_MS: "100"
+      INDEXER_BACKOFF_MAX_MS: "30000"
       RUST_LOG: info
     command: ["run"]
 

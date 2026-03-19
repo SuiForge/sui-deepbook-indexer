@@ -8,13 +8,13 @@ Self-hosted data backend for DeepBook v3 on Sui blockchain.
 
 ## Overview
 
-Checkpoint-driven indexer that extracts DeepBook trade events (`OrderFilled`), computes 1-minute rollups (including OHLC), and serves data via REST/WebSocket APIs.
+Checkpoint-driven indexer that reads Sui checkpoint data from Remote Store, extracts DeepBook execution data (fills + order lifecycle), computes 1-minute rollups (including OHLC), and serves data via REST/WebSocket APIs.
 
 **Features:**
 - ✅ DeepBook trade fact storage (`db_events`)
 - ✅ 1-minute rollup metrics (pool & BalanceManager dimensions)
 - ✅ Idempotent ingestion with replay capability
-- ✅ RPC failover support
+- ✅ Remote Store-first ingestion with environment-based package selection
 - ✅ REST API + WebSocket streaming
 - ✅ Docker Compose one-click deployment
 
@@ -144,7 +144,8 @@ Sui Blockchain (Mainnet/Testnet)
         ↓
    Indexer (Rust)
    - Checkpoint-driven ingestion
-   - DeepBook event filtering
+   - Remote Store checkpoint ingestion
+   - Environment-based package selection
    - 1-minute rollup computation
         ↓
    PostgreSQL
@@ -172,26 +173,30 @@ Sui Blockchain (Mainnet/Testnet)
 ## Requirements
 
 - Docker & Docker Compose
-- (Optional) Go 1.21+ for local API development
+- (Optional) Go 1.24+ for local API development
 - (Optional) Rust 1.75+ for local indexer development
 
 ## Configuration
 
-Default configuration connects to **Sui Testnet**. To customize:
+Default configuration connects to **Sui Testnet**. To customize the indexer, set:
 
-Edit `docker/docker-compose.yml`:
 ```yaml
 environment:
-  RPC_API_URL: https://fullnode.testnet.sui.io:443
-  # DeepBook package id(s). You can pass multiple IDs (comma/space-separated).
-  DEEPBOOK_PACKAGE_ID: "0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc"  # Testnet DeepBookV3
+  DEEPBOOK_ENV: testnet
+  INDEXER_POLL_INTERVAL_MS: "1000"
+  INDEXER_REQUEST_TIMEOUT_MS: "30000"
+  INDEXER_BACKOFF_BASE_MS: "100"
+  INDEXER_BACKOFF_MAX_MS: "30000"
 ```
 
 For Mainnet, change to:
+
 ```yaml
-  RPC_API_URL: https://fullnode.mainnet.sui.io:443
-  DEEPBOOK_PACKAGE_ID: "0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc"  # Mainnet DeepBookV3
+environment:
+  DEEPBOOK_ENV: mainnet
 ```
+
+`DEEPBOOK_ENV` controls both the Remote Store URL and the built-in DeepBook package list for that network.
 
 ## Replay & Data Correction
 
@@ -203,8 +208,9 @@ See docs/USAGE.md for minimal commands. Advanced replay instructions can be adde
 ```bash
 cd indexer
 export DATABASE_URL=postgresql://sui:sui@localhost:5432/deepbook_indexer
-export RPC_API_URL=https://fullnode.mainnet.sui.io:443
-export DEEPBOOK_PACKAGE_ID=0x...dee9 # or multiple IDs: "0xabc...,0xdef..."
+export DEEPBOOK_ENV=mainnet
+export INDEXER_POLL_INTERVAL_MS=1000
+export INDEXER_REQUEST_TIMEOUT_MS=30000
 cargo run -- run
 ```
 
@@ -212,7 +218,7 @@ cargo run -- run
 ```bash
 cd api-go
 export DATABASE_URL=postgresql://sui:sui@localhost:5432/deepbook_indexer
-go run cmd/api/main.go
+go run cmd/main.go
 ```
 
 ## License

@@ -1,15 +1,16 @@
 # Usage Guide
 
-This guide shows how to run the DeepBook Data Service with a minimal setup.
+This guide shows how to run the DeepBook Data Service with the current Remote Store-first indexer setup.
 
 ## Prerequisites
 - Docker + Docker Compose (recommended), or
-- Go 1.21+ (API local run)
+- Go 1.24+ (API local run)
 - Rust 1.75+ (Indexer local run)
+- PostgreSQL 16+ (if not using Docker)
 
 ## Quick Start (Docker)
 
-```powershell
+```bash
 # From repo root
 docker compose -f docker/docker-compose.yml up -d --build
 
@@ -17,55 +18,83 @@ docker compose -f docker/docker-compose.yml up -d --build
 # Postgres at localhost:5432 (user: sui, pass: sui, db: deepbook_indexer)
 ```
 
+Docker defaults:
+- API listens on `0.0.0.0:8080`
+- Indexer uses `DEEPBOOK_ENV=testnet`
+- Data source is the Sui Remote Store checkpoint stream
+
 ## Configuration
 
-Minimal env variables:
+### Indexer
 
-```
+Minimal indexer configuration:
+
+```dotenv
 DATABASE_URL=postgresql://sui:sui@localhost:5432/deepbook_indexer
-# Choose one network
-# RPC_API_URL=https://fullnode.mainnet.sui.io:443
-RPC_API_URL=https://fullnode.testnet.sui.io:443
-# Optional RPC failover
-# RPC_API_FALLBACK=https://fullnode.testnet.sui.io:443
-# Match network
-# Mainnet: 0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc
-# Testnet: 0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc
-DEEPBOOK_PACKAGE_ID=... # supports multiple IDs (comma/space-separated)
-DEEPBOOK_EVENT_TYPE=OrderFilled
+DEEPBOOK_ENV=testnet
+INDEXER_POLL_INTERVAL_MS=1000
+INDEXER_REQUEST_TIMEOUT_MS=30000
+INDEXER_BACKOFF_BASE_MS=100
+INDEXER_BACKOFF_MAX_MS=30000
+RUST_LOG=info
+```
 
-# API optional auth / WS ping
-# API_SINGLE_KEY=...
-# WS_PING_INTERVAL_SEC=15
+Notes:
+- `DEEPBOOK_ENV` accepts `testnet` or `mainnet`
+- The current indexer uses `DEEPBOOK_ENV` to select both:
+  - the Remote Store URL
+  - the built-in DeepBook package list for that network
+- You no longer need to set `RPC_API_URL`, `DEEPBOOK_PACKAGE_ID`, or `DEEPBOOK_EVENT_TYPE`
+
+### API
+
+```dotenv
+DATABASE_URL=postgresql://sui:sui@localhost:5432/deepbook_indexer
+API_LISTEN_ADDR=127.0.0.1:8080
+LOG_LEVEL=info
+WS_PING_INTERVAL_SEC=15
+API_SINGLE_KEY=
 ```
 
 ## Run Locally (no Docker)
 
-```powershell
-# Start Postgres yourself, then apply migrations:
-psql "postgresql://sui:sui@localhost:5432/deepbook_indexer" -f migrations/001_init.sql
-psql "postgresql://sui:sui@localhost:5432/deepbook_indexer" -f migrations/002_add_pool_ohlc.sql
+```bash
+# Start Postgres yourself, then apply all migrations
+for f in migrations/*.sql; do
+  psql "postgresql://sui:sui@localhost:5432/deepbook_indexer" -f "$f"
+done
 
 # Run API
-$env:DATABASE_URL = "postgresql://sui:sui@localhost:5432/deepbook_indexer"
 cd api-go
-go run cmd/api/main.go
+export DATABASE_URL="postgresql://sui:sui@localhost:5432/deepbook_indexer"
+export API_LISTEN_ADDR="127.0.0.1:8080"
+go run cmd/main.go
 
 # Run Indexer (choose network)
 cd ../indexer
-$env:DATABASE_URL = "postgresql://sui:sui@localhost:5432/deepbook_indexer"
-$env:RPC_API_URL = "https://fullnode.testnet.sui.io:443"
-$env:DEEPBOOK_PACKAGE_ID = "0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc"
+export DATABASE_URL="postgresql://sui:sui@localhost:5432/deepbook_indexer"
+export DEEPBOOK_ENV="testnet"
+export INDEXER_POLL_INTERVAL_MS="1000"
+export INDEXER_REQUEST_TIMEOUT_MS="30000"
 cargo run --package deepbook-indexer-indexer --bin deepbook-indexer-indexer -- run
+```
+
+To switch to Mainnet:
+
+```bash
+export DEEPBOOK_ENV="mainnet"
 ```
 
 ## API Endpoints
 
-- GET /health
-- GET /v1/deepbook/pools/:pool_id/metrics?window=1h
-- GET /v1/deepbook/pools/:pool_id/candles?window=24h&interval=1m
-- GET /v1/deepbook/bm/:bm_id/volume?window=24h
-- WS /v1/deepbook/trades?pool={pool_id}
+- `GET /health`
+- `GET /v1/deepbook/pools/:pool_id/metrics?window=1h|24h`
+- `GET /v1/deepbook/pools/:pool_id/candles?window=1h|24h|7d&interval=1m|5m|15m|1h`
+- `GET /v1/deepbook/pools/:pool_id/execution/summary?window=1h|24h|7d`
+- `GET /v1/deepbook/pools/:pool_id/execution/lifecycle?...`
+- `GET /v1/deepbook/pools/:pool_id/execution/fills?...`
+- `GET /v1/deepbook/bm/:bm_id/volume?window=24h|7d`
+- `WS /v1/deepbook/trades?pool={pool_id}`
 
-See architecture details in docs/ARCHITECTURE.md.
-Field semantics: docs/DATA_CONTRACT.md.
+See architecture details in `docs/ARCHITECTURE.md`.
+Field semantics: `docs/DATA_CONTRACT.md`.
