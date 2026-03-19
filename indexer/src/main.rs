@@ -9,6 +9,7 @@
 
 mod config;
 mod events;
+mod metadata;
 mod remote_store;
 
 use anyhow::{Context, Result};
@@ -74,6 +75,7 @@ async fn main() -> Result<()> {
 
     let pool = db::connect(&cfg.database_url).await?;
     sqlx::migrate!("../migrations").run(&pool).await?;
+    metadata::seed_known_metadata(&pool, cfg.env).await?;
 
     match cli.command {
         Some(Commands::Replay {

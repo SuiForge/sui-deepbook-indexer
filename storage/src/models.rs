@@ -116,6 +116,28 @@ pub struct BmMetric1mRow {
     pub taker_volume: Decimal,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AssetMetadataRow {
+    pub asset_id: String,
+    pub coin_type: Option<String>,
+    pub symbol: Option<String>,
+    pub name: Option<String>,
+    pub decimals: Option<i32>,
+    pub status: Option<String>,
+    pub source: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PoolMetadataRow {
+    pub pool_id: String,
+    pub base_asset_id: Option<String>,
+    pub quote_asset_id: Option<String>,
+    pub package_id: Option<String>,
+    pub status: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +207,41 @@ mod tests {
         assert_eq!(value["event_ts"], serde_json::Value::Null);
         assert_eq!(value["module"], "order_info");
         assert_eq!(value["raw_event"]["kind"], "lifecycle");
+    }
+
+    #[test]
+    fn asset_metadata_row_serializes_seed_fields() {
+        let row = AssetMetadataRow {
+            asset_id: "sui".to_string(),
+            coin_type: Some("0x2::sui::SUI".to_string()),
+            symbol: Some("SUI".to_string()),
+            name: Some("Sui".to_string()),
+            decimals: Some(9),
+            status: Some("seeded".to_string()),
+            source: Some("static_seed:repo-local".to_string()),
+            updated_at: ts(1_700_000_200_000),
+        };
+
+        let value = serde_json::to_value(&row).unwrap();
+        assert_eq!(value["asset_id"], "sui");
+        assert_eq!(value["coin_type"], "0x2::sui::SUI");
+        assert_eq!(value["decimals"], 9);
+    }
+
+    #[test]
+    fn pool_metadata_row_serializes_seed_fields() {
+        let row = PoolMetadataRow {
+            pool_id: "0xpool".to_string(),
+            base_asset_id: Some("sui".to_string()),
+            quote_asset_id: Some("usdc".to_string()),
+            package_id: Some("0xpackage".to_string()),
+            status: Some("seeded".to_string()),
+            updated_at: ts(1_700_000_300_000),
+        };
+
+        let value = serde_json::to_value(&row).unwrap();
+        assert_eq!(value["pool_id"], "0xpool");
+        assert_eq!(value["base_asset_id"], "sui");
+        assert_eq!(value["status"], "seeded");
     }
 }

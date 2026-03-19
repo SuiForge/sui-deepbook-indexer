@@ -1,16 +1,10 @@
 use crate::models::{
-    BmMetric1mRow,
-    DbEventRow,
-    DbOrderEventRow,
-    EventRow,
-    IndexerStateRow,
-    ObjectRow,
-    PoolMetric1mRow,
-    TransactionRow,
+    AssetMetadataRow, BmMetric1mRow, DbEventRow, DbOrderEventRow, EventRow, IndexerStateRow,
+    ObjectRow, PoolMetadataRow, PoolMetric1mRow, TransactionRow,
 };
 use chrono::{DateTime, Utc};
-use sqlx::{Executor, Postgres, QueryBuilder};
 use deepbook_indexer_common::types::{EventCursor, TxCursor};
+use sqlx::{Executor, Postgres, QueryBuilder};
 
 pub async fn get_indexer_state<'e, E>(executor: E) -> Result<IndexerStateRow, sqlx::Error>
 where
@@ -155,6 +149,120 @@ where
 }
 
 // --- DeepBook-specific helpers ---
+
+pub async fn upsert_asset_metadata<'e, E>(
+    executor: E,
+    rows: &[AssetMetadataRow],
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut qb = QueryBuilder::<Postgres>::new(
+        "INSERT INTO asset_metadata (asset_id, coin_type, symbol, name, decimals, status, source, updated_at) ",
+    );
+
+    qb.push_values(rows, |mut b, row| {
+        b.push_bind(&row.asset_id)
+            .push_bind(&row.coin_type)
+            .push_bind(&row.symbol)
+            .push_bind(&row.name)
+            .push_bind(row.decimals)
+            .push_bind(&row.status)
+            .push_bind(&row.source)
+            .push_bind(row.updated_at);
+    });
+
+    qb.push(
+        " ON CONFLICT (asset_id) DO UPDATE SET
+          coin_type = EXCLUDED.coin_type,
+          symbol = EXCLUDED.symbol,
+          name = EXCLUDED.name,
+          decimals = EXCLUDED.decimals,
+          status = EXCLUDED.status,
+          source = EXCLUDED.source,
+          updated_at = EXCLUDED.updated_at",
+    );
+
+    qb.build().execute(executor).await.map(|_| ())
+}
+
+pub async fn upsert_pool_metadata<'e, E>(
+    executor: E,
+    rows: &[PoolMetadataRow],
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut qb = QueryBuilder::<Postgres>::new(
+        "INSERT INTO pool_metadata (pool_id, base_asset_id, quote_asset_id, package_id, status, updated_at) ",
+    );
+
+    qb.push_values(rows, |mut b, row| {
+        b.push_bind(&row.pool_id)
+            .push_bind(&row.base_asset_id)
+            .push_bind(&row.quote_asset_id)
+            .push_bind(&row.package_id)
+            .push_bind(&row.status)
+            .push_bind(row.updated_at);
+    });
+
+    qb.push(
+        " ON CONFLICT (pool_id) DO UPDATE SET
+          base_asset_id = EXCLUDED.base_asset_id,
+          quote_asset_id = EXCLUDED.quote_asset_id,
+          package_id = EXCLUDED.package_id,
+          status = EXCLUDED.status,
+          updated_at = EXCLUDED.updated_at",
+    );
+
+    qb.build().execute(executor).await.map(|_| ())
+}
+
+pub async fn get_asset_metadata<'e, E>(
+    executor: E,
+    asset_id: &str,
+) -> Result<Option<AssetMetadataRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query_as::<_, AssetMetadataRow>(
+        r#"
+        SELECT asset_id, coin_type, symbol, name, decimals, status, source, updated_at
+        FROM asset_metadata
+        WHERE asset_id = $1
+        "#,
+    )
+    .bind(asset_id)
+    .fetch_optional(executor)
+    .await
+}
+
+pub async fn get_pool_metadata<'e, E>(
+    executor: E,
+    pool_id: &str,
+) -> Result<Option<PoolMetadataRow>, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query_as::<_, PoolMetadataRow>(
+        r#"
+        SELECT pool_id, base_asset_id, quote_asset_id, package_id, status, updated_at
+        FROM pool_metadata
+        WHERE pool_id = $1
+        "#,
+    )
+    .bind(pool_id)
+    .fetch_optional(executor)
+    .await
+}
 
 pub async fn insert_db_events<'e, E>(executor: E, events: &[DbEventRow]) -> Result<(), sqlx::Error>
 where

@@ -45,7 +45,7 @@
 
 ### 2.3 Migration Status
 
-**Current after migration 004**
+**Current after migration 005**
 - `db_events` and `db_order_events` now introduce schema columns for:
   - `checkpoint_ts`
   - `event_ts`
@@ -56,6 +56,11 @@
 - Existing rows are backfilled with `checkpoint_ts = ts` and `event_ts = ts` as a compatibility fallback
 - Current write-path status for newly ingested rows:
   - `checkpoint_ts`, `event_ts`, `ingested_at`, `package_id`, `module`, `event_name`, and `raw_event` can already be populated from the current conversion layer
+- `asset_metadata` and `pool_metadata` tables now exist as v2 scaffolding
+- indexer startup seeds a repo-local static catalog:
+  - shared asset rows for `SUI` and `USDC`
+  - one known mainnet `SUI/USDC` pool mapping
+  - testnet currently keeps only asset rows until verified pool ids are curated
 - Readers should continue to treat `COALESCE(event_ts, checkpoint_ts, ts)` as the safe compatibility read path during the phased rollout
 - The remaining writer and API rollout still continues incrementally in later tasks
 
@@ -396,11 +401,16 @@ Schema foundation status:
 
 ## 9. Target v2 Metadata Tables
 
-以下两类表是 `v2` 的关键补齐能力，当前尚未正式落地：
+以下两类表现在已经以最小脚手架形式落地，但当前仍属于 **static seed / partial coverage** 阶段：
 
 ### 9.1 `asset_metadata`（Target v2）
 
-建议字段：
+Current foundation:
+- migration `005_add_metadata_tables.sql` creates `asset_metadata`
+- indexer startup seeds repo-local rows for `SUI` / `USDC`
+- current source is static and intended for normalization scaffolding, not full on-chain discovery
+
+字段：
 - `asset_id`
 - `coin_type`
 - `symbol`
@@ -416,7 +426,12 @@ Schema foundation status:
 
 ### 9.2 `pool_metadata`（Target v2）
 
-建议字段：
+Current foundation:
+- migration `005_add_metadata_tables.sql` creates `pool_metadata`
+- current seed only includes one known mainnet `SUI/USDC` mapping from existing repo-local bootstrap data
+- testnet pool rows are intentionally not guessed until verified identifiers are curated
+
+字段：
 - `pool_id`
 - `base_asset_id`
 - `quote_asset_id`
@@ -620,7 +635,7 @@ Schema foundation status:
 
 1. 历史数据中的 `raw_event` 可能仍为空，但当前写路径已经可以为新写入事件持久化该字段
 2. `ts` 当前是 checkpoint 时间代理值，不是正式的 `event_ts`
-3. 缺少 `asset_metadata` / `pool_metadata`
+3. `asset_metadata` / `pool_metadata` 已有最小静态脚手架，但覆盖面仍有限，尚未实现链上自动发现
 4. 缺少 normalized 数值字段
 5. `OrderExpired` 尚未进入主索引流程
 6. 当前 `execution_score` 是内部启发式指标，需要在对外文档中避免被误解为协议原生指标
