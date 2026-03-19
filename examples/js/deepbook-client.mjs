@@ -1,8 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#!/usr/bin/env node
-
 function printHelp() {
   console.log(`DeepBook example client
 
