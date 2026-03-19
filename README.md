@@ -12,8 +12,10 @@ Checkpoint-driven indexer that reads Sui checkpoint data from Remote Store, extr
 
 **Features:**
 - ✅ DeepBook trade fact storage (`db_events`)
+- ✅ Dual timestamp + raw event persistence (`checkpoint_ts`, `event_ts`, `raw_event`)
 - ✅ 1-minute rollup metrics (pool & BalanceManager dimensions)
 - ✅ Idempotent ingestion with replay capability
+- ✅ Metadata scaffolding (`asset_metadata`, `pool_metadata`) with startup seed
 - ✅ Remote Store-first ingestion with environment-based package selection
 - ✅ REST API + WebSocket streaming
 - ✅ Docker Compose one-click deployment
@@ -29,6 +31,11 @@ Service will automatically:
 2. Run schema migrations
 3. Index DeepBook trades (default: Testnet in `docker/docker-compose.yml`)
 4. Serve API on http://localhost:8080
+
+Current v2 foundation notes:
+- `execution/fills` and `execution/lifecycle` now prefer `COALESCE(event_ts, checkpoint_ts, ts)` for `ts_ms`
+- new indexer writes persist `checkpoint_ts`, `event_ts`, `package_id`, `module`, `event_name`, and `raw_event`
+- every indexer startup seeds minimal metadata scaffolding for `asset_metadata` / `pool_metadata`
 
 ## API Usage
 
@@ -136,6 +143,7 @@ WebSocket trade event:
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture
 - **[docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)** - v2 target contract + current compatibility notes
 - **[docs/DEEPBOOK_EVENTS.md](docs/DEEPBOOK_EVENTS.md)** - DeepBook v3 event list (from Move sources)
+- **[docs/plans/2026-03-19-v2-foundation-implementation.md](docs/plans/2026-03-19-v2-foundation-implementation.md)** - Foundation rollout implementation plan
 
 ## Architecture
 

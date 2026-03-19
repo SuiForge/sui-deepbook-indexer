@@ -22,6 +22,7 @@ Docker defaults:
 - API listens on `0.0.0.0:8080`
 - Indexer uses `DEEPBOOK_ENV=testnet`
 - Data source is the Sui Remote Store checkpoint stream
+- Indexer startup also seeds minimal metadata scaffolding (`asset_metadata`, `pool_metadata`)
 
 ## Configuration
 
@@ -44,6 +45,11 @@ Notes:
 - The current indexer uses `DEEPBOOK_ENV` to select both:
   - the Remote Store URL
   - the built-in DeepBook package list for that network
+- current write-path also persists:
+  - `checkpoint_ts`
+  - `event_ts`
+  - `package_id` / `module` / `event_name`
+  - `raw_event`
 - You no longer need to set `RPC_API_URL`, `DEEPBOOK_PACKAGE_ID`, or `DEEPBOOK_EVENT_TYPE`
 
 ### API
@@ -98,3 +104,7 @@ export DEEPBOOK_ENV="mainnet"
 
 See architecture details in `docs/ARCHITECTURE.md`.
 Field semantics: `docs/DATA_CONTRACT.md`.
+
+Current compatibility notes:
+- `execution/fills` and `execution/lifecycle` return `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`
+- `execution/summary` and the current WebSocket trade stream still use the legacy `ts` semantics until a later rollout

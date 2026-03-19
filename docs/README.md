@@ -7,6 +7,12 @@
 - `docs/DATA_CONTRACT.md`: v2 目标契约 + 当前兼容说明
 - `docs/DEEPBOOK_EVENTS.md`: DeepBook v3 event inventory (from Move sources)
 
+## Current Rollout State
+
+- execution read-path now prefers `COALESCE(event_ts, checkpoint_ts, ts)` for fills/lifecycle `ts_ms`
+- indexer write-path now persists dual timestamps, metadata columns, and `raw_event`
+- metadata scaffolding (`asset_metadata`, `pool_metadata`) is now created by migration `005` and seeded on startup
+
 ## Planning / V2 Docs
 
 - `docs/PRODUCT_PRD.md`: 产品定位、能力边界、目标用户、阶段目标
