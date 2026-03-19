@@ -11,7 +11,7 @@ mod config;
 mod events;
 mod remote_store;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use rust_decimal::Decimal;
@@ -25,14 +25,17 @@ use tracing::{debug, info, warn};
 
 use config::{DeepbookEnv, IndexerConfig};
 use deepbook_indexer_storage::{db, models::*, queries};
-use events::{MoveStruct, OrderCanceled, OrderFilled, OrderModified, OrderPlaced};
+use events::{EventMetadata, MoveStruct, OrderCanceled, OrderFilled, OrderModified, OrderPlaced};
 use remote_store::{Backoff, RemoteStoreClient};
 
 // Re-export for events module
 pub use deepbook_indexer_storage::models::{DbEventRow, DbOrderEventRow};
 
 #[derive(Parser)]
-#[command(name = "deepbook-indexer", about = "DeepBook indexer (Remote Store edition)")]
+#[command(
+    name = "deepbook-indexer",
+    about = "DeepBook indexer (Remote Store edition)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -73,9 +76,10 @@ async fn main() -> Result<()> {
     sqlx::migrate!("../migrations").run(&pool).await?;
 
     match cli.command {
-        Some(Commands::Replay { from_checkpoint, to_checkpoint }) => {
-            replay_range(&pool, from_checkpoint, to_checkpoint).await
-        }
+        Some(Commands::Replay {
+            from_checkpoint,
+            to_checkpoint,
+        }) => replay_range(&pool, from_checkpoint, to_checkpoint).await,
         Some(Commands::Status) => show_status(&pool, &cfg).await,
         Some(Commands::Run) | None => run_indexer(pool, cfg).await,
     }
@@ -83,11 +87,10 @@ async fn main() -> Result<()> {
 
 async fn run_indexer(pool: PgPool, cfg: IndexerConfig) -> Result<()> {
     // Get last processed checkpoint from DB
-    let processed_checkpoint: i64 = sqlx::query_scalar(
-        "SELECT processed_checkpoint FROM indexer_state WHERE id = 1",
-    )
-    .fetch_one(&pool)
-    .await?;
+    let processed_checkpoint: i64 =
+        sqlx::query_scalar("SELECT processed_checkpoint FROM indexer_state WHERE id = 1")
+            .fetch_one(&pool)
+            .await?;
 
     let start_checkpoint = cfg
         .start_checkpoint
@@ -208,11 +211,13 @@ async fn ingest_checkpoint(
             if OrderFilled::matches_event_type(event, *env) {
                 match bcs::from_bytes::<OrderFilled>(&event.contents) {
                     Ok(order_filled) => {
+                        let event_meta = build_event_metadata(event, &order_filled)?;
                         let row = order_filled.to_db_row(
                             seq as i64,
                             timestamp_ms,
                             &tx_digest,
                             event_idx as i32,
+                            event_meta,
                         );
                         trade_events.push(row);
                         debug!(
@@ -234,11 +239,13 @@ async fn ingest_checkpoint(
             if OrderPlaced::matches_event_type(event, *env) {
                 match bcs::from_bytes::<OrderPlaced>(&event.contents) {
                     Ok(order_placed) => {
+                        let event_meta = build_event_metadata(event, &order_placed)?;
                         let row = order_placed.to_order_event_row(
                             seq as i64,
                             timestamp_ms,
                             &tx_digest,
                             event_idx as i32,
+                            event_meta,
                         );
                         order_lifecycle_events.push(row);
                     }
@@ -255,11 +262,13 @@ async fn ingest_checkpoint(
             if OrderCanceled::matches_event_type(event, *env) {
                 match bcs::from_bytes::<OrderCanceled>(&event.contents) {
                     Ok(order_canceled) => {
+                        let event_meta = build_event_metadata(event, &order_canceled)?;
                         let row = order_canceled.to_order_event_row(
                             seq as i64,
                             timestamp_ms,
                             &tx_digest,
                             event_idx as i32,
+                            event_meta,
                         );
                         order_lifecycle_events.push(row);
                     }
@@ -276,11 +285,13 @@ async fn ingest_checkpoint(
             if OrderModified::matches_event_type(event, *env) {
                 match bcs::from_bytes::<OrderModified>(&event.contents) {
                     Ok(order_modified) => {
+                        let event_meta = build_event_metadata(event, &order_modified)?;
                         let row = order_modified.to_order_event_row(
                             seq as i64,
                             timestamp_ms,
                             &tx_digest,
                             event_idx as i32,
+                            event_meta,
                         );
                         order_lifecycle_events.push(row);
                     }
@@ -328,6 +339,19 @@ async fn ingest_checkpoint(
     tx.commit().await?;
 
     Ok(seq)
+}
+
+fn build_event_metadata<T: serde::Serialize>(
+    event: &sui_types::event::Event,
+    parsed_event: &T,
+) -> Result<EventMetadata> {
+    Ok(EventMetadata {
+        package_id: event.package_id.to_string(),
+        module: event.type_.module.to_string(),
+        event_name: event.type_.name.to_string(),
+        raw_event: serde_json::to_value(parsed_event)
+            .context("serialize DeepBook event into raw_event JSON")?,
+    })
 }
 
 fn truncate_to_minute(ts: DateTime<Utc>) -> DateTime<Utc> {
@@ -476,7 +500,11 @@ fn compute_rollups(events: &[DbEventRow]) -> (Vec<PoolMetric1mRow>, Vec<BmMetric
 }
 
 async fn replay_range(pool: &PgPool, from: i64, to: i64) -> Result<()> {
-    info!(from_checkpoint = from, to_checkpoint = to, "Starting replay");
+    info!(
+        from_checkpoint = from,
+        to_checkpoint = to,
+        "Starting replay"
+    );
 
     if from > to {
         anyhow::bail!("from_checkpoint must be <= to_checkpoint");
@@ -495,12 +523,16 @@ async fn replay_range(pool: &PgPool, from: i64, to: i64) -> Result<()> {
         .collect();
 
     if !affected_buckets.is_empty() {
-        info!(bucket_count = affected_buckets.len(), "Recomputing affected rollup buckets");
+        info!(
+            bucket_count = affected_buckets.len(),
+            "Recomputing affected rollup buckets"
+        );
     }
 
     for bucket_start in affected_buckets {
         let bucket_end = bucket_start + ChronoDuration::minutes(1);
-        let bucket_events = queries::list_events_in_time_range(&mut *tx, bucket_start, bucket_end).await?;
+        let bucket_events =
+            queries::list_events_in_time_range(&mut *tx, bucket_start, bucket_end).await?;
         let (pool_rows, bm_rows) = compute_rollups(&bucket_events);
         info!(
             bucket_start = %bucket_start,
@@ -519,11 +551,10 @@ async fn replay_range(pool: &PgPool, from: i64, to: i64) -> Result<()> {
 }
 
 async fn show_status(pool: &PgPool, cfg: &IndexerConfig) -> Result<()> {
-    let processed_checkpoint: i64 = sqlx::query_scalar(
-        "SELECT processed_checkpoint FROM indexer_state WHERE id = 1",
-    )
-    .fetch_one(pool)
-    .await?;
+    let processed_checkpoint: i64 =
+        sqlx::query_scalar("SELECT processed_checkpoint FROM indexer_state WHERE id = 1")
+            .fetch_one(pool)
+            .await?;
 
     let event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM db_events")
         .fetch_one(pool)
@@ -544,7 +575,10 @@ async fn show_status(pool: &PgPool, cfg: &IndexerConfig) -> Result<()> {
     println!("=======================");
     println!("Environment:          {}", cfg.env);
     println!("Remote Store:         {}", cfg.remote_store_url());
-    println!("Package versions:     {}", cfg.env.package_addresses().len());
+    println!(
+        "Package versions:     {}",
+        cfg.env.package_addresses().len()
+    );
     println!();
     println!("Processed checkpoint: {}", processed_checkpoint);
     if let Some(l) = latest {

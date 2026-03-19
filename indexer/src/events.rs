@@ -11,14 +11,27 @@ use crate::config::DeepbookEnv;
 fn timestamp_from_ms(ms: i64) -> chrono::DateTime<chrono::Utc> {
     use chrono::{TimeZone, Utc};
 
-    Utc.timestamp_millis_opt(ms).single().unwrap_or_else(Utc::now)
+    Utc.timestamp_millis_opt(ms)
+        .single()
+        .unwrap_or_else(Utc::now)
 }
 
-fn timestamp_from_u64_or(ms: u64, fallback: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+fn timestamp_from_u64_or(
+    ms: u64,
+    fallback: chrono::DateTime<chrono::Utc>,
+) -> chrono::DateTime<chrono::Utc> {
     i64::try_from(ms)
         .ok()
         .map(timestamp_from_ms)
         .unwrap_or(fallback)
+}
+
+#[derive(Debug, Clone)]
+pub struct EventMetadata {
+    pub package_id: String,
+    pub module: String,
+    pub event_name: String,
+    pub raw_event: serde_json::Value,
 }
 
 /// Trait for Move struct event types
@@ -72,6 +85,7 @@ impl OrderFilled {
         checkpoint_ts_ms: i64,
         tx_digest: &str,
         event_seq: i32,
+        event_meta: EventMetadata,
     ) -> crate::DbEventRow {
         use chrono::Utc;
         use rust_decimal::Decimal;
@@ -96,10 +110,10 @@ impl OrderFilled {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            package_id: None,
-            module: Some(<Self as MoveStruct>::MODULE.to_string()),
-            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
-            raw_event: serde_json::to_value(self).ok(),
+            package_id: Some(event_meta.package_id),
+            module: Some(event_meta.module),
+            event_name: Some(event_meta.event_name),
+            raw_event: Some(event_meta.raw_event),
         }
     }
 }
@@ -131,6 +145,7 @@ impl OrderPlaced {
         checkpoint_ts_ms: i64,
         tx_digest: &str,
         event_seq: i32,
+        event_meta: EventMetadata,
     ) -> crate::DbOrderEventRow {
         use chrono::Utc;
         use rust_decimal::Decimal;
@@ -156,10 +171,10 @@ impl OrderPlaced {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            package_id: None,
-            module: Some(<Self as MoveStruct>::MODULE.to_string()),
-            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
-            raw_event: serde_json::to_value(self).ok(),
+            package_id: Some(event_meta.package_id),
+            module: Some(event_meta.module),
+            event_name: Some(event_meta.event_name),
+            raw_event: Some(event_meta.raw_event),
         }
     }
 }
@@ -191,6 +206,7 @@ impl OrderCanceled {
         checkpoint_ts_ms: i64,
         tx_digest: &str,
         event_seq: i32,
+        event_meta: EventMetadata,
     ) -> crate::DbOrderEventRow {
         use chrono::Utc;
         use rust_decimal::Decimal;
@@ -216,10 +232,10 @@ impl OrderCanceled {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            package_id: None,
-            module: Some(<Self as MoveStruct>::MODULE.to_string()),
-            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
-            raw_event: serde_json::to_value(self).ok(),
+            package_id: Some(event_meta.package_id),
+            module: Some(event_meta.module),
+            event_name: Some(event_meta.event_name),
+            raw_event: Some(event_meta.raw_event),
         }
     }
 }
@@ -252,6 +268,7 @@ impl OrderModified {
         checkpoint_ts_ms: i64,
         tx_digest: &str,
         event_seq: i32,
+        event_meta: EventMetadata,
     ) -> crate::DbOrderEventRow {
         use chrono::Utc;
         use rust_decimal::Decimal;
@@ -277,10 +294,10 @@ impl OrderModified {
             tx_digest: tx_digest.to_string(),
             event_seq,
             event_index: None,
-            package_id: None,
-            module: Some(<Self as MoveStruct>::MODULE.to_string()),
-            event_name: Some(<Self as MoveStruct>::NAME.to_string()),
-            raw_event: serde_json::to_value(self).ok(),
+            package_id: Some(event_meta.package_id),
+            module: Some(event_meta.module),
+            event_name: Some(event_meta.event_name),
+            raw_event: Some(event_meta.raw_event),
         }
     }
 }
@@ -319,13 +336,14 @@ impl MoveStruct for BalanceEvent {
     const NAME: &'static str = "BalanceEvent";
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn order_filled_row_sets_v2_compatibility_fields() {
+        use chrono::TimeZone;
+
         let event = OrderFilled {
             pool_id: ObjectID::from_hex_literal("0x2").unwrap(),
             maker_order_id: 1,
@@ -345,12 +363,32 @@ mod tests {
             timestamp: 1_700_000_000_500,
         };
 
-        let row = event.to_db_row(10, 1_700_000_000_000, "0xtx", 7);
+        let row = event.to_db_row(
+            10,
+            1_700_000_000_000,
+            "0xtx",
+            7,
+            EventMetadata {
+                package_id: "0xpackage".to_string(),
+                module: "order_info".to_string(),
+                event_name: "OrderFilled".to_string(),
+                raw_event: serde_json::json!({"kind": "fill"}),
+            },
+        );
         assert!(row.checkpoint_ts.is_some());
         assert!(row.event_ts.is_some());
+        assert_eq!(
+            row.checkpoint_ts,
+            chrono::Utc.timestamp_millis_opt(1_700_000_000_000).single()
+        );
+        assert_eq!(
+            row.event_ts,
+            chrono::Utc.timestamp_millis_opt(1_700_000_000_500).single()
+        );
+        assert_eq!(row.package_id.as_deref(), Some("0xpackage"));
         assert_eq!(row.module.as_deref(), Some("order_info"));
         assert_eq!(row.event_name.as_deref(), Some("OrderFilled"));
-        assert!(row.raw_event.is_some());
+        assert_eq!(row.raw_event, Some(serde_json::json!({"kind": "fill"})));
     }
 
     #[test]
@@ -368,11 +406,60 @@ mod tests {
             timestamp: 1_700_000_100_000,
         };
 
-        let row = event.to_order_event_row(11, 1_700_000_000_000, "0xtx2", 8);
+        let row = event.to_order_event_row(
+            11,
+            1_700_000_000_000,
+            "0xtx2",
+            8,
+            EventMetadata {
+                package_id: "0xpackage2".to_string(),
+                module: "order".to_string(),
+                event_name: "OrderCanceled".to_string(),
+                raw_event: serde_json::json!({"kind": "cancel"}),
+            },
+        );
         assert!(row.checkpoint_ts.is_some());
         assert!(row.event_ts.is_some());
+        assert_eq!(row.package_id.as_deref(), Some("0xpackage2"));
         assert_eq!(row.module.as_deref(), Some("order"));
         assert_eq!(row.event_name.as_deref(), Some("OrderCanceled"));
-        assert!(row.raw_event.is_some());
+        assert_eq!(row.raw_event, Some(serde_json::json!({"kind": "cancel"})));
+    }
+
+    #[test]
+    fn order_filled_row_falls_back_to_checkpoint_ts_on_invalid_event_timestamp() {
+        let event = OrderFilled {
+            pool_id: ObjectID::from_hex_literal("0x7").unwrap(),
+            maker_order_id: 1,
+            taker_order_id: 2,
+            maker_client_order_id: 3,
+            taker_client_order_id: 4,
+            price: 100,
+            taker_is_bid: true,
+            taker_fee: 0,
+            taker_fee_is_deep: false,
+            maker_fee: 0,
+            maker_fee_is_deep: false,
+            base_quantity: 5,
+            quote_quantity: 500,
+            maker_balance_manager_id: ObjectID::from_hex_literal("0x8").unwrap(),
+            taker_balance_manager_id: ObjectID::from_hex_literal("0x9").unwrap(),
+            timestamp: u64::MAX,
+        };
+
+        let row = event.to_db_row(
+            12,
+            1_700_000_000_000,
+            "0xtx3",
+            9,
+            EventMetadata {
+                package_id: "0xpackage3".to_string(),
+                module: "order_info".to_string(),
+                event_name: "OrderFilled".to_string(),
+                raw_event: serde_json::json!({"kind": "fill"}),
+            },
+        );
+
+        assert_eq!(row.event_ts, row.checkpoint_ts);
     }
 }
