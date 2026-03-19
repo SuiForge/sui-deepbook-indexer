@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lab-JY/deepbook-indexer/api-go/internal/config"
 	"github.com/Lab-JY/deepbook-indexer/api-go/internal/handlers"
+	"github.com/Lab-JY/deepbook-indexer/api-go/internal/source"
 	"github.com/Lab-JY/deepbook-indexer/api-go/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -29,7 +30,8 @@ func main() {
 	}
 
 	r := gin.Default()
-	h := handlers.New(st, cfg.APISingleKey, cfg.WSPingInterval)
+	probe := source.NewRemoteStoreProbe(cfg.DeepbookEnv, cfg.SourceStatusTimeout, cfg.SourceStatusCache)
+	h := handlers.NewWithSource(st, probe, cfg.APISingleKey, cfg.WSPingInterval)
 
 	// Auth middleware
 	authMiddleware := h.AuthMiddleware()

@@ -550,11 +550,17 @@ Current foundation:
 - `asset_metadata_count`
 - `pool_metadata_count`
 - `distinct_pools`
+- `latest_checkpoint`
+- `checkpoint_lag`
+- `source_status`
+- `source_url`
+- `source_error`
 
 说明：
-- 当前 `status` 成功时固定为 `ok`
-- 该接口当前只暴露数据库可直接观测到的处理进度与计数摘要
-- 尚未主动查询 Remote Store 最新 checkpoint，因此当前不包含 remote lag
+- 当前 `status` 在数据库路径正常但 source probe 失败时可返回 `degraded`
+- 该接口首先暴露数据库可直接观测到的处理进度与计数摘要
+- 当 Remote Store probe 成功时，会额外返回 `latest_checkpoint` 与 `checkpoint_lag`
+- `source_status` 当前用于区分 `ok` / `error` / `disabled`
 
 ## 10.6 `GET /v1/deepbook/pools/:pool_id/metrics`
 
@@ -752,7 +758,7 @@ Current foundation:
 4. 缺少 normalized 数值字段
 5. `OrderExpired` 尚未进入主索引流程
 6. 当前 `execution_score` 是内部启发式指标，需要在对外文档中避免被误解为协议原生指标
-7. `/status` 当前还没有主动对比 Remote Store 最新 checkpoint，因此暂不提供 remote lag
+7. `/status` 已经引入 source-aware lag 语义，但当前仍只依赖 Remote Store checkpoint 存在性探测，尚未扩展为更完整的 source health / latency 视图
 
 ---
 

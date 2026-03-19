@@ -196,6 +196,11 @@ type ServiceStatus struct {
 	AssetMetadataCount  int64     `json:"asset_metadata_count"`
 	PoolMetadataCount   int64     `json:"pool_metadata_count"`
 	DistinctPools       int64     `json:"distinct_pools"`
+	LatestCheckpoint    *int64    `json:"latest_checkpoint,omitempty"`
+	CheckpointLag       *int64    `json:"checkpoint_lag,omitempty"`
+	SourceStatus        string    `json:"source_status"`
+	SourceURL           *string   `json:"source_url,omitempty"`
+	SourceError         *string   `json:"source_error,omitempty"`
 }
 
 func (s *Store) GetPoolMetrics(ctx context.Context, poolID string, window string) (*PoolMetrics, error) {
@@ -468,6 +473,7 @@ func (s *Store) GetServiceStatus(ctx context.Context) (*ServiceStatus, error) {
 	}
 
 	item.Status = "ok"
+	item.SourceStatus = "disabled"
 	return &item, nil
 }
 

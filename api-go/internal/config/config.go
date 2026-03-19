@@ -10,21 +10,27 @@ import (
 )
 
 type Config struct {
-	DatabaseURL    string
-	ListenAddr     string
-	WSPingInterval time.Duration
-	APISingleKey   string // optional single-key auth
-	LogLevel       string
+	DatabaseURL         string
+	ListenAddr          string
+	WSPingInterval      time.Duration
+	APISingleKey        string // optional single-key auth
+	LogLevel            string
+	DeepbookEnv         string
+	SourceStatusTimeout time.Duration
+	SourceStatusCache   time.Duration
 }
 
 func Load() *Config {
 	loadEnvFiles()
 	return &Config{
-		DatabaseURL:    getEnv("DATABASE_URL", ""),
-		ListenAddr:     getEnv("API_LISTEN_ADDR", "0.0.0.0:8080"),
-		WSPingInterval: getDuration("WS_PING_INTERVAL_SEC", 15) * time.Second,
-		APISingleKey:   getEnv("API_SINGLE_KEY", ""),
-		LogLevel:       getEnv("LOG_LEVEL", "info"),
+		DatabaseURL:         getEnv("DATABASE_URL", ""),
+		ListenAddr:          getEnv("API_LISTEN_ADDR", "0.0.0.0:8080"),
+		WSPingInterval:      getDuration("WS_PING_INTERVAL_SEC", 15) * time.Second,
+		APISingleKey:        getEnv("API_SINGLE_KEY", ""),
+		LogLevel:            getEnv("LOG_LEVEL", "info"),
+		DeepbookEnv:         getEnv("DEEPBOOK_ENV", "testnet"),
+		SourceStatusTimeout: getDuration("SOURCE_STATUS_TIMEOUT_MS", 5000) * time.Millisecond,
+		SourceStatusCache:   getDuration("SOURCE_STATUS_CACHE_SEC", 15) * time.Second,
 	}
 }
 

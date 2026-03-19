@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Lab-JY/deepbook-indexer/api-go/internal/source"
 	"github.com/Lab-JY/deepbook-indexer/api-go/internal/store"
 )
 
@@ -23,6 +25,11 @@ type fakeStore struct {
 	lastTopMarketsWindow string
 	lastTopMarketsSort   string
 	lastTopMarketsLimit  int
+}
+
+type fakeSourceProbe struct {
+	status *source.CheckpointStatus
+	err    error
 }
 
 type assetsResponse struct {
@@ -128,6 +135,10 @@ func (f *fakeStore) ListTopMarkets(_ context.Context, window string, sort string
 
 func (f *fakeStore) GetServiceStatus(context.Context) (*store.ServiceStatus, error) {
 	return f.serviceStatus, nil
+}
+
+func (f *fakeSourceProbe) LatestCheckpoint(context.Context) (*source.CheckpointStatus, error) {
+	return f.status, f.err
 }
 
 func (f *fakeStore) GetPoolMetrics(context.Context, string, string) (*store.PoolMetrics, error) {
@@ -438,5 +449,75 @@ func TestGetServiceStatusSuccess(t *testing.T) {
 	}
 	if !resp.IndexerUpdatedAt.Equal(updatedAt) {
 		t.Fatalf("expected updated_at %s, got %s", updatedAt, resp.IndexerUpdatedAt)
+	}
+	if resp.SourceStatus != "disabled" {
+		t.Fatalf("expected source_status disabled, got %q", resp.SourceStatus)
+	}
+}
+
+func TestGetServiceStatusEnrichesLagFromSource(t *testing.T) {
+	updatedAt := time.Date(2026, time.March, 19, 12, 0, 0, 0, time.UTC)
+	h := NewWithSource(&fakeStore{
+		serviceStatus: &store.ServiceStatus{
+			Status:              "ok",
+			ProcessedCheckpoint: 12345,
+			IndexerUpdatedAt:    updatedAt,
+		},
+	}, &fakeSourceProbe{
+		status: &source.CheckpointStatus{
+			LatestCheckpoint: 12370,
+			SourceURL:        "https://checkpoints.testnet.sui.io",
+		},
+	}, "", 0)
+
+	c, w := newTestContext(http.MethodGet, "/v1/deepbook/status", nil)
+	h.GetServiceStatus(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	resp := decodeJSON[store.ServiceStatus](t, w)
+	if resp.SourceStatus != "ok" {
+		t.Fatalf("expected source_status ok, got %q", resp.SourceStatus)
+	}
+	if resp.LatestCheckpoint == nil || *resp.LatestCheckpoint != 12370 {
+		t.Fatalf("expected latest checkpoint 12370, got %#v", resp.LatestCheckpoint)
+	}
+	if resp.CheckpointLag == nil || *resp.CheckpointLag != 25 {
+		t.Fatalf("expected checkpoint lag 25, got %#v", resp.CheckpointLag)
+	}
+	if resp.SourceURL == nil || *resp.SourceURL != "https://checkpoints.testnet.sui.io" {
+		t.Fatalf("expected source url, got %#v", resp.SourceURL)
+	}
+}
+
+func TestGetServiceStatusMarksSourceErrorAsDegraded(t *testing.T) {
+	h := NewWithSource(&fakeStore{
+		serviceStatus: &store.ServiceStatus{
+			Status:              "ok",
+			ProcessedCheckpoint: 12345,
+			IndexerUpdatedAt:    time.Date(2026, time.March, 19, 12, 0, 0, 0, time.UTC),
+		},
+	}, &fakeSourceProbe{
+		err: errors.New("remote store unavailable"),
+	}, "", 0)
+
+	c, w := newTestContext(http.MethodGet, "/v1/deepbook/status", nil)
+	h.GetServiceStatus(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	resp := decodeJSON[store.ServiceStatus](t, w)
+	if resp.Status != "degraded" {
+		t.Fatalf("expected status degraded, got %q", resp.Status)
+	}
+	if resp.SourceStatus != "error" {
+		t.Fatalf("expected source_status error, got %q", resp.SourceStatus)
+	}
+	if resp.SourceError == nil || *resp.SourceError != "remote store unavailable" {
+		t.Fatalf("expected source_error, got %#v", resp.SourceError)
 	}
 }

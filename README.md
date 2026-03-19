@@ -39,7 +39,7 @@ Current v2 foundation notes:
 - new indexer writes persist `checkpoint_ts`, `event_ts`, `package_id`, `module`, `event_name`, and `raw_event`
 - every indexer startup seeds minimal metadata scaffolding for `asset_metadata` / `pool_metadata`
 - metadata REST endpoints expose the currently seeded/scaffolded asset + pool catalog for builder discovery
-- `/v1/deepbook/status` currently reports DB-observed service state; remote latest-checkpoint lag is not yet included
+- `/v1/deepbook/status` now enriches DB-observed service state with Remote Store latest checkpoint / lag when source probing succeeds
 
 ## API Usage
 
@@ -89,7 +89,8 @@ wscat -H "Authorization: Bearer <API_SINGLE_KEY>" -c "ws://localhost:8080/v1/dee
 
 ### Parameters
 
-- **status semantics**: `/v1/deepbook/status` reflects database-observed checkpoint and row counts; it does not yet fetch remote latest checkpoint / lag.
+- **status semantics**: `/v1/deepbook/status` now returns DB counts plus `latest_checkpoint`, `checkpoint_lag`, `source_status`, and `source_url` when the Remote Store probe succeeds.
+- **source probe config**: `DEEPBOOK_ENV=testnet|mainnet`, `SOURCE_STATUS_TIMEOUT_MS` (default `5000`), `SOURCE_STATUS_CACHE_SEC` (default `15`).
 - **metadata coverage**: current `/assets` + `/pools` responses reflect the repo-local seeded catalog, not full chain-wide discovery.
 - **top markets**: `window=1h|24h|7d`, `sort=volume_quote|trades`, `limit=1..100` (default `20`).
 - **window (pool metrics)**: allowed `1h`, `24h`; default `1h`.

@@ -60,6 +60,9 @@ API_LISTEN_ADDR=127.0.0.1:8080
 LOG_LEVEL=info
 WS_PING_INTERVAL_SEC=15
 API_SINGLE_KEY=
+DEEPBOOK_ENV=testnet
+SOURCE_STATUS_TIMEOUT_MS=5000
+SOURCE_STATUS_CACHE_SEC=15
 ```
 
 ## Run Locally (no Docker)
@@ -111,7 +114,7 @@ See architecture details in `docs/ARCHITECTURE.md`.
 Field semantics: `docs/DATA_CONTRACT.md`.
 
 Current compatibility notes:
-- `/status` currently exposes DB-observed processed checkpoint and table counts; remote latest-checkpoint lag is not yet surfaced
+- `/status` now exposes DB-observed processed checkpoint and counts, and enriches them with Remote Store latest checkpoint / lag when source probing succeeds
 - `/assets`, `/pools`, `/pools/:pool_id/metadata` expose the current seeded metadata catalog for builder discovery; coverage is intentionally partial during rollout
 - `/markets/top` is backed by `pool_metrics_1m` and joins seeded pool metadata when available
 - `execution/fills` and `execution/lifecycle` return `ts_ms` from `COALESCE(event_ts, checkpoint_ts, ts)`

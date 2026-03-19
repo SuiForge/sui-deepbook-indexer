@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
+	"github.com/Lab-JY/deepbook-indexer/api-go/internal/source"
 	"github.com/Lab-JY/deepbook-indexer/api-go/internal/store"
 )
 
@@ -23,8 +24,13 @@ var upgrader = websocket.Upgrader{
 
 type Handler struct {
 	store          storeBackend
+	source         sourceProbe
 	singleKey      string
 	wsPingInterval time.Duration
+}
+
+type sourceProbe interface {
+	LatestCheckpoint(ctx context.Context) (*source.CheckpointStatus, error)
 }
 
 type storeBackend interface {
@@ -45,10 +51,17 @@ type storeBackend interface {
 var _ storeBackend = (*store.Store)(nil)
 
 func New(store storeBackend, singleKey string, wsPingInterval time.Duration) *Handler {
+	return NewWithSource(store, noopSourceProbe{}, singleKey, wsPingInterval)
+}
+
+func NewWithSource(store storeBackend, probe sourceProbe, singleKey string, wsPingInterval time.Duration) *Handler {
 	if wsPingInterval <= 0 {
 		wsPingInterval = 15 * time.Second
 	}
-	return &Handler{store: store, singleKey: singleKey, wsPingInterval: wsPingInterval}
+	if probe == nil {
+		probe = noopSourceProbe{}
+	}
+	return &Handler{store: store, source: probe, singleKey: singleKey, wsPingInterval: wsPingInterval}
 }
 
 func (h *Handler) GetAssets(c *gin.Context) {
@@ -118,7 +131,7 @@ func (h *Handler) GetTopMarkets(c *gin.Context) {
 }
 
 func (h *Handler) GetServiceStatus(c *gin.Context) {
-	status, err := h.store.GetServiceStatus(c.Request.Context())
+	status, err := h.composeServiceStatus(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -129,6 +142,53 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+func (h *Handler) composeServiceStatus(ctx context.Context) (*store.ServiceStatus, error) {
+	status, err := h.store.GetServiceStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if status == nil {
+		return nil, nil
+	}
+
+	merged := *status
+	if strings.TrimSpace(merged.Status) == "" {
+		merged.Status = "ok"
+	}
+	if strings.TrimSpace(merged.SourceStatus) == "" {
+		merged.SourceStatus = "disabled"
+	}
+	merged.SourceError = nil
+
+	checkpointStatus, err := h.source.LatestCheckpoint(ctx)
+	if err != nil {
+		merged.Status = "degraded"
+		merged.SourceStatus = "error"
+		msg := err.Error()
+		merged.SourceError = &msg
+		return &merged, nil
+	}
+	if checkpointStatus == nil {
+		merged.SourceStatus = "disabled"
+		return &merged, nil
+	}
+
+	merged.SourceStatus = "ok"
+	if checkpointStatus.SourceURL != "" {
+		sourceURL := checkpointStatus.SourceURL
+		merged.SourceURL = &sourceURL
+	}
+	latest := checkpointStatus.LatestCheckpoint
+	merged.LatestCheckpoint = &latest
+	lag := latest - merged.ProcessedCheckpoint
+	if lag < 0 {
+		lag = 0
+	}
+	merged.CheckpointLag = &lag
+
+	return &merged, nil
 }
 
 func (h *Handler) AuthMiddleware() gin.HandlerFunc {
@@ -396,4 +456,10 @@ func (h *Handler) TradesWS(c *gin.Context) {
 
 func (h *Handler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+type noopSourceProbe struct{}
+
+func (noopSourceProbe) LatestCheckpoint(context.Context) (*source.CheckpointStatus, error) {
+	return nil, nil
 }
